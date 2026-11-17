@@ -130,7 +130,7 @@ async def set_node_b_fault(body: FaultRequest, request: Request):
 
 
 # ---------------------------------------------------------------------------
-# Static context routes MUST be registered before /context/{key}.
+# Static context routes MUST be registered before /context/{key:path}.
 # ---------------------------------------------------------------------------
 
 
@@ -173,7 +173,7 @@ async def context_search(
     return {"results": merged[:limit]}
 
 
-@app.put("/context/{key}", response_model=PutResponse)
+@app.put("/context/{key:path}", response_model=PutResponse)
 async def put_context(key: str, body: PutRequest, request: Request) -> dict:
     try:
         return await _state(request).put(
@@ -183,7 +183,7 @@ async def put_context(key: str, body: PutRequest, request: Request) -> dict:
         raise HTTPException(status_code=404, detail=f"key {key!r} disappeared")
 
 
-@app.get("/context/{key}")
+@app.get("/context/{key:path}")
 async def get_context(key: str, request: Request, hydrate: bool = False):
     state = _state(request)
     if not hydrate:
@@ -208,7 +208,7 @@ async def get_context(key: str, request: Request, hydrate: bool = False):
         )
 
 
-@app.delete("/context/{key}", status_code=204)
+@app.delete("/context/{key:path}", status_code=204)
 async def delete_context(key: str, request: Request) -> Response:
     await _state(request).delete(key)
     return Response(status_code=204)

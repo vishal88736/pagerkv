@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import time
 
 from common.tokens import count_tokens
 from node_a.state import compress_key_ranges
@@ -200,3 +201,32 @@ def test_update_key_bumps_version(a_client, key_factory, text_factory):
     hydrated = a_client.get(f"/context/{key}?hydrate=true").json()
     assert hydrated["source"] == "L1"
     assert _sha(hydrated["full_text"]) == _sha(v2)
+
+
+def test_keys_with_slashes_round_trip(a_client, b_client) -> None:
+    """Node A accepts the same key space as Node B (``{key:path}``)."""
+    key = "obs/turn-041/tool"
+    text = "Tool output: query on orders scanned 1200 rows in 40 milliseconds."
+
+    put = a_client.put(f"/context/{key}", json={"text": text})
+    assert put.status_code == 200, put.text
+    assert put.json()["key"] == key
+
+    # Raw slashes and %2F-encoded slashes address the same key.
+    for path in (f"/context/{key}", "/context/obs%2Fturn-041%2Ftool"):
+        view = a_client.get(path)
+        assert view.status_code == 200, view.text
+        assert view.json()["key"] == key
+
+    assert key in a_client.get("/context/status").json()["keys"]
+
+    # Replication reached Node B under the same key, and hydrate returns it.
+    for _ in range(50):
+        if a_client.get(f"/context/{key}").json()["consistency_status"] == "SYNCED_ARCHIVED":
+            break
+        time.sleep(0.1)
+    assert b_client.get(f"/archive/{key}").json()["full_text"] == text
+    assert a_client.get(f"/context/{key}", params={"hydrate": "true"}).json()["full_text"] == text
+
+    assert a_client.delete(f"/context/{key}").status_code == 204
+    assert a_client.get(f"/context/{key}").status_code == 404
