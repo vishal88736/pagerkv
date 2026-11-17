@@ -9,11 +9,20 @@ from pathlib import Path
 from typing import AsyncIterator
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi.responses import (
+    FileResponse,
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
+)
+
+from common import metrics
+from common.admin import TOKEN_HEADER, require_admin
 
 from common.schemas import (
     FaultRequest,
+    PolicyRequest,
     NodeAHealth,
     PromptResponse,
     PutRequest,
@@ -31,7 +40,9 @@ from node_a.state import (
 
 logger = logging.getLogger("pagerkv.node_a")
 
-UI_FILE = Path(__file__).resolve().parents[1] / "ui" / "index.html"
+ROOT = Path(__file__).resolve().parents[1]
+UI_FILE = ROOT / "ui" / "index.html"
+BENCH_CSV = ROOT / "bench" / "results.csv"
 
 # Names served by static GET /context/<name> routes; a key with one of these
 # names could be written but never read back, so writes are rejected.
@@ -50,6 +61,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         max_window_tokens=config.MAX_WINDOW_TOKENS,
         state_file=config.NODE_A_STATE_FILE,
         index_budget_tokens=config.INDEX_BUDGET_TOKENS,
+        spill_dirty=config.SPILL_DIRTY,
     )
 
     app.state.node_state = state
@@ -109,13 +121,49 @@ async def ui() -> FileResponse:
     return FileResponse(UI_FILE, media_type="text/html")
 
 
+@app.get("/ui/bench.csv", include_in_schema=False)
+async def ui_bench_csv() -> FileResponse:
+    """Benchmark results for the dashboard's replay view."""
+    if not BENCH_CSV.exists():
+        raise HTTPException(status_code=404, detail="run bench/run_benchmark.py first")
+    return FileResponse(BENCH_CSV, media_type="text/csv")
+
+
+@app.get("/metrics", response_class=PlainTextResponse)
+async def prometheus_metrics(request: Request) -> str:
+    status = await _state(request).status(include_text=False)
+    rows = status["keys"].values()
+    def count(field: str, value: str) -> int:
+        return sum(1 for row in rows if row[field] == value)
+    return metrics.render(
+        [
+            ("pagerkv_a_window_tokens", "gauge", "Tokens in the rendered prompt.", status["active_window_tokens"]),
+            ("pagerkv_a_window_budget_tokens", "gauge", "MAX_WINDOW_TOKENS.", status["max_window_tokens"]),
+            ("pagerkv_a_over_budget", "gauge", "1 when the prompt is over budget.", status["over_budget"]),
+            ("pagerkv_a_page_faults_total", "counter", "Hydrations served from L2 or the local spill.", status["page_faults"]),
+            ("pagerkv_a_tokens_saved", "gauge", "Tokens saved by paging to Node B.", status["tokens_saved_by_replication"]),
+            ("pagerkv_a_tokens_spilled", "gauge", "Tokens moved to the local spill.", status["tokens_spilled_locally"]),
+            ("pagerkv_a_keys", "gauge", "Keys held by Node A.", len(status["keys"])),
+            ("pagerkv_a_keys_resident", "gauge", "Keys resident in full.", count("residence", "RESIDENT_FULL")),
+            ("pagerkv_a_keys_paged", "gauge", "Keys paged to Node B.", count("residence", "PAGED_TO_NODE_B")),
+            ("pagerkv_a_keys_spilled", "gauge", "Dirty keys spilled to local disk.", count("residence", "SPILLED_LOCAL")),
+            ("pagerkv_a_keys_dirty", "gauge", "Keys not yet acked by Node B.", count("consistency_status", "DIRTY_UNREPLICATED")),
+            ("pagerkv_a_pending_deletes", "gauge", "Deletes not yet applied on Node B.", status["pending_deletes"]),
+        ]
+    )
+
+
 async def _proxy_fault(request: Request, method: str, body: dict | None = None):
     replicator = _replicator(request)
+    headers = {}
+    if TOKEN_HEADER in request.headers:
+        headers[TOKEN_HEADER] = request.headers[TOKEN_HEADER]
     try:
         response = await replicator.client.request(
             method,
             f"{replicator.base_url}/admin/fault",
             json=body,
+            headers=headers,
             timeout=min(2.0, replicator.timeout_s),
         )
     except httpx.HTTPError:
@@ -123,12 +171,12 @@ async def _proxy_fault(request: Request, method: str, body: dict | None = None):
     return JSONResponse(status_code=response.status_code, content=response.json())
 
 
-@app.get("/admin/node_b/fault")
+@app.get("/admin/node_b/fault", dependencies=[Depends(require_admin)])
 async def get_node_b_fault(request: Request):
     return await _proxy_fault(request, "GET")
 
 
-@app.post("/admin/node_b/fault")
+@app.post("/admin/node_b/fault", dependencies=[Depends(require_admin)])
 async def set_node_b_fault(body: FaultRequest, request: Request):
     return await _proxy_fault(request, "POST", body.model_dump())
 
@@ -139,8 +187,9 @@ async def set_node_b_fault(body: FaultRequest, request: Request):
 
 
 @app.get("/context/status", response_model=StatusResponse)
-async def context_status(request: Request) -> dict:
-    return await _state(request).status()
+async def context_status(request: Request, include_text: bool = True) -> dict:
+    """``include_text=false`` omits every key's ``prompt_view`` (much smaller)."""
+    return await _state(request).status(include_text=include_text)
 
 
 @app.get("/context/prompt", response_model=PromptResponse)
@@ -154,8 +203,9 @@ async def context_search(
 ) -> dict:
     state = _state(request)
     replicator = _replicator(request)
-    local = await state.local_search(q)
     remote = await replicator.search(q, limit)
+    # Without Node B's full-text index, fall back to local full texts too.
+    local = await state.local_search(q, include_text=remote is None)
     if remote is None:
         if local:
             return {"results": local[:limit]}
@@ -186,7 +236,11 @@ async def put_context(key: str, body: PutRequest, request: Request) -> dict:
         )
     try:
         return await _state(request).put(
-            key, body.text, _replicator(request)
+            key,
+            body.text,
+            _replicator(request),
+            pinned=body.pinned,
+            priority=body.priority,
         )
     except KeyNotFound:
         raise HTTPException(status_code=404, detail=f"key {key!r} disappeared")
@@ -217,7 +271,17 @@ async def get_context(key: str, request: Request, hydrate: bool = False):
         )
 
 
+@app.patch("/context/{key:path}", response_model=PutResponse)
+async def patch_context(key: str, body: PolicyRequest, request: Request) -> dict:
+    """Pin / unpin a key or change its eviction priority."""
+    try:
+        return await _state(request).set_policy(key, body.pinned, body.priority)
+    except KeyNotFound:
+        raise HTTPException(status_code=404, detail=f"no such key {key!r}")
+
+
 @app.delete("/context/{key:path}", status_code=204)
 async def delete_context(key: str, request: Request) -> Response:
-    await _state(request).delete(key)
+    """Delete locally; Node B's copy is deleted now or by the retry loop."""
+    await _state(request).delete(key, _replicator(request))
     return Response(status_code=204)

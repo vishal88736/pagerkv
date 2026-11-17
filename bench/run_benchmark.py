@@ -319,7 +319,9 @@ def run() -> dict:
                         response.raise_for_status()
 
                         prompt = client.get("/context/prompt").json()
-                        status = client.get("/context/status").json()
+                        status = client.get(
+                            "/context/status", params={"include_text": "false"}
+                        ).json()
                         dirty = sum(
                             1
                             for row in status["keys"].values()
@@ -330,6 +332,11 @@ def run() -> dict:
                             for row in status["keys"].values()
                             if row["residence"] == "PAGED_TO_NODE_B"
                         )
+                        spilled = sum(
+                            1
+                            for row in status["keys"].values()
+                            if row["residence"] == "SPILLED_LOCAL"
+                        )
                         rows.append(
                             {
                                 "turn": turn,
@@ -337,6 +344,7 @@ def run() -> dict:
                                 "pagerkv_prompt_tokens": prompt["tokens"],
                                 "dirty_keys": dirty,
                                 "paged_out_keys": paged,
+                                "spilled_keys": spilled,
                                 "tokens_saved": status[
                                     "tokens_saved_by_replication"
                                 ],
@@ -414,6 +422,7 @@ def run() -> dict:
                 "pagerkv_prompt_tokens",
                 "dirty_keys",
                 "paged_out_keys",
+                "spilled_keys",
                 "tokens_saved",
                 "recall_ok",
             ],

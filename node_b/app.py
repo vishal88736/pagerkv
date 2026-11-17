@@ -14,6 +14,10 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.responses import PlainTextResponse
+
+from common import metrics
+from common.admin import require_admin
 
 from common.schemas import (
     ArchiveResponse,
@@ -62,12 +66,34 @@ async def health() -> dict[str, object]:
     return {"ok": True, "node": "B"}
 
 
-@app.get("/admin/fault", response_model=FaultResponse)
+@app.get("/metrics", response_class=PlainTextResponse)
+async def prometheus_metrics() -> str:
+    stats = archive.stats()
+    mode = FAULT["mode"]
+    return metrics.render(
+        [
+            ("pagerkv_b_archived_keys", "gauge", "Keys held in the archive.", stats["keys"]),
+            ("pagerkv_b_archived_tokens", "gauge", "Full-text tokens archived.", stats["tokens"]),
+            ("pagerkv_b_fault_down", "gauge", "1 when fault mode is down.", mode == "down"),
+            ("pagerkv_b_fault_slow", "gauge", "1 when fault mode is slow.", mode == "slow"),
+        ]
+    )
+
+
+@app.get(
+    "/admin/fault",
+    response_model=FaultResponse,
+    dependencies=[Depends(require_admin)],
+)
 async def get_fault() -> FaultResponse:
     return FaultResponse(mode=FAULT["mode"], delay_s=float(FAULT["delay_s"]))  # type: ignore[arg-type]
 
 
-@app.post("/admin/fault", response_model=FaultResponse)
+@app.post(
+    "/admin/fault",
+    response_model=FaultResponse,
+    dependencies=[Depends(require_admin)],
+)
 async def set_fault(request: FaultRequest) -> FaultResponse:
     FAULT["mode"] = request.mode
     FAULT["delay_s"] = float(request.delay_s)
@@ -117,3 +143,12 @@ async def get_archive(key: str) -> ArchiveResponse:
         stub=row["stub"],
         sha256=row["sha256"],
     )
+
+
+@app.delete(
+    "/archive/{key:path}",
+    dependencies=[Depends(fault_guard)],
+)
+async def delete_archive(key: str, version: int = Query(ge=0)) -> dict[str, object]:
+    """Delete ``key`` if its archived version is <= ``version`` (idempotent)."""
+    return archive.delete(key, version)

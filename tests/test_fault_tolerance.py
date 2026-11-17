@@ -47,9 +47,14 @@ def _wait_until(predicate, timeout: float = 10.0, interval: float = 0.1):
     return None
 
 
-def test_dirty_keys_never_evicted(
+def test_dirty_keys_spill_locally_never_paged(
     a_client, b_client, key_factory, text_factory
 ):
+    """Node B down: dirty keys leave the prompt via the local spill, not Node B.
+
+    Their full text stays on Node A (never PAGED_TO_NODE_B), the window stays
+    within budget, and hydrate serves the exact text from the spill.
+    """
     _set_fault(b_client, "down")
 
     keys = [key_factory(f"dirty_{i}") for i in range(4)]
@@ -58,23 +63,159 @@ def test_dirty_keys_never_evicted(
         texts[key] = text_factory(850, seed=1000 + i)
         ack = _put(a_client, key, texts[key])
         assert ack["consistency_status"] == "DIRTY_UNREPLICATED"
-        assert ack["residence"] == "RESIDENT_FULL"
 
     status = _status(a_client)
-    assert status["over_budget"] is True
-    assert status["active_window_tokens"] > 2000
+    assert status["over_budget"] is False
+    assert status["active_window_tokens"] <= 2000
+    residences = set()
     for key in keys:
         row = status["keys"][key]
         assert row["consistency_status"] == "DIRTY_UNREPLICATED"
-        assert row["residence"] == "RESIDENT_FULL"
+        assert row["residence"] in ("RESIDENT_FULL", "SPILLED_LOCAL")
         assert row["eviction_allowed"] is False
         assert row["replication_error"]
-        view = a_client.get(f"/context/{key}")
-        assert view.status_code == 200
-        assert view.json()["content"] == texts[key]
-        assert view.json()["is_stub"] is False
+        residences.add(row["residence"])
+    assert "SPILLED_LOCAL" in residences
+    assert status["tokens_spilled_locally"] > 0
+
+    spilled = [k for k in keys if status["keys"][k]["residence"] == "SPILLED_LOCAL"]
+    view = a_client.get(f"/context/{spilled[0]}").json()
+    assert view["is_stub"] is True
+    assert view["content"].startswith("[SPILLED v1")
+
+    # Node B is still down, yet every key is recoverable byte-for-byte.
+    for key in keys:
+        response = a_client.get(f"/context/{key}?hydrate=true")
+        assert response.status_code == 200, response.text
+        assert _sha(response.json()["full_text"]) == _sha(texts[key])
+        assert response.json()["source"] in ("L1", "L1_SPILL")
 
     _set_fault(b_client, "none")
+
+
+def test_spill_disabled_keeps_dirty_resident_over_budget(tmp_path):
+    """With spill_dirty=False the original rule holds: over budget, nothing moved."""
+
+    class DownReplicator:
+        async def replicate(self, key, version, text):
+            return ReplicationResult(ok=False, error="Node B HTTP 503")
+
+    async def scenario() -> None:
+        state = NodeAState(
+            max_window_tokens=200,
+            state_file=str(tmp_path / "state.json"),
+            spill_dirty=False,
+        )
+        for i in range(3):
+            await state.put(f"k{i}", "dirty text " * 40, DownReplicator())
+        assert state.over_budget is True
+        assert all(e.residence == "RESIDENT_FULL" for e in state.entries.values())
+
+    asyncio.run(scenario())
+
+
+def test_stale_write_reconciles_version(tmp_path):
+    """Node B holds v5 (e.g. Node A lost its state): the PUT becomes v6 and syncs."""
+
+    class AheadReplicator:
+        def __init__(self) -> None:
+            self.remote_version = 5
+            self.calls: list[int] = []
+
+        async def replicate(self, key, version, text):
+            self.calls.append(version)
+            if version <= self.remote_version:
+                return ReplicationResult(
+                    ok=False,
+                    error="stale",
+                    stale=True,
+                    remote_version=self.remote_version,
+                )
+            return ReplicationResult(
+                ok=True, version=version, stub=f"[STUB v{version} | fake]: x", full_tokens=2
+            )
+
+    async def scenario() -> None:
+        state = NodeAState(state_file=str(tmp_path / "state.json"))
+        replicator = AheadReplicator()
+        ack = await state.put("k", "newest text", replicator)
+        assert replicator.calls == [1, 6]
+        assert ack["version"] == 6
+        assert ack["consistency_status"] == "SYNCED_ARCHIVED"
+
+    asyncio.run(scenario())
+
+
+def test_delete_propagates_and_retries(tmp_path):
+    """DELETE leaves a tombstone until Node B confirms; re-PUT continues the version."""
+
+    class FlakyDeleter:
+        def __init__(self) -> None:
+            self.up = False
+            self.deletes: list[tuple[str, int]] = []
+
+        async def replicate(self, key, version, text):
+            return ReplicationResult(
+                ok=True, version=version, stub=f"[STUB v{version} | fake]: x", full_tokens=2
+            )
+
+        async def delete(self, key, max_version):
+            self.deletes.append((key, max_version))
+            return self.up
+
+    async def scenario() -> None:
+        state = NodeAState(state_file=str(tmp_path / "state.json"))
+        rep = FlakyDeleter()
+        await state.put("k", "one", rep)
+        await state.put("k", "two", rep)
+        assert await state.delete("k", rep) is True
+        assert state.tombstones == {"k": 2}          # Node B unreachable
+
+        # Re-created key starts after the deleted version.
+        ack = await state.put("k", "three", rep)
+        assert ack["version"] == 3
+
+        rep.up = True
+        await state.retry_dirty(rep)
+        assert state.tombstones == {}
+        assert rep.deletes[-1] == ("k", 2)            # never deletes v3
+
+        reloaded = NodeAState(state_file=str(tmp_path / "state.json"))
+        assert reloaded.tombstones == {}
+        assert reloaded.entries["k"].version == 3
+
+    asyncio.run(scenario())
+
+
+def test_pinned_and_priority_eviction(tmp_path):
+    """Pinned keys are never paged; low priority goes before LRU order."""
+
+    class OkReplicator:
+        async def replicate(self, key, version, text):
+            return ReplicationResult(
+                ok=True, version=version, stub=f"[STUB v{version} | fake]: {key}", full_tokens=2
+            )
+
+    async def scenario() -> None:
+        state = NodeAState(max_window_tokens=300, state_file=str(tmp_path / "s.json"))
+        rep = OkReplicator()
+        body = "observation text " * 40           # ~80 tokens each
+        await state.put("oldest_pinned", body, rep, pinned=True)
+        await state.put("low", body, rep, priority=-5)
+        await state.put("normal", body, rep)
+        await state.put("newest", body, rep)
+        await state.put("trigger", body, rep)
+        res = {k: e.residence for k, e in state.entries.items()}
+        assert res["oldest_pinned"] == "RESIDENT_FULL"
+        assert res["low"] == "PAGED_TO_NODE_B"      # evicted before older/LRU keys
+        assert res["trigger"] == "RESIDENT_FULL"
+
+        # Once unpinned it is the least recently used key, so it goes next.
+        await state.set_policy("oldest_pinned", pinned=False, priority=None)
+        await state.put("more", body, rep)
+        assert state.entries["oldest_pinned"].residence == "PAGED_TO_NODE_B"
+
+    asyncio.run(scenario())
 
 
 def test_recovery_after_node_b_returns(

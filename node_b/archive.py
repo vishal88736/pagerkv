@@ -16,7 +16,7 @@ import time
 from typing import Any
 
 from common.tokens import count_tokens
-from node_b.summarizer import build_stub
+from common.summarizer import build_stub
 
 DEFAULT_DB = "node_b_archive.db"
 
@@ -151,6 +151,44 @@ def save(key: str, version: int, full_text: str) -> dict[str, Any]:
             }
         finally:
             conn.close()
+
+
+def delete(key: str, max_version: int) -> dict[str, Any]:
+    """Delete ``key`` only if its archived version is <= ``max_version``.
+
+    The version bound makes deletes safe to retry: a delayed delete for v3
+    can never remove a v4 written after the key was re-created.
+    """
+    _ensure_initialized()
+    with _write_lock:
+        conn = _connect()
+        try:
+            row = conn.execute(
+                "SELECT version FROM archive WHERE key = ?", (key,)
+            ).fetchone()
+            if row is None:
+                return {"key": key, "deleted": False, "version": None}
+            if row["version"] > max_version:
+                return {"key": key, "deleted": False, "version": row["version"]}
+            conn.execute("DELETE FROM archive WHERE key = ?", (key,))
+            if _FTS_AVAILABLE:
+                conn.execute("DELETE FROM archive_fts WHERE key = ?", (key,))
+            conn.commit()
+            return {"key": key, "deleted": True, "version": row["version"]}
+        finally:
+            conn.close()
+
+
+def stats() -> dict[str, int]:
+    _ensure_initialized()
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n, COALESCE(SUM(full_tokens), 0) AS t FROM archive"
+        ).fetchone()
+        return {"keys": int(row["n"]), "tokens": int(row["t"])}
+    finally:
+        conn.close()
 
 
 def get(key: str) -> dict[str, Any] | None:

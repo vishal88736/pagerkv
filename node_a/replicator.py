@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
 import httpx
@@ -29,6 +29,9 @@ class ReplicationResult:
     full_tokens: int | None = None
     sha256: str | None = None
     error: str | None = None
+    # Set when Node B already holds a newer version (``remote_version``).
+    stale: bool = False
+    remote_version: int | None = None
 
 
 @dataclass
@@ -84,8 +87,12 @@ class Replicator:
         if not isinstance(payload, dict):
             return ReplicationResult(ok=False, error="Node B returned bad payload")
         if payload.get("stale_write"):
+            remote = payload.get("version")
             return ReplicationResult(
-                ok=False, error="Node B rejected write as stale"
+                ok=False,
+                error=f"Node B rejected write as stale (it holds v{remote})",
+                stale=True,
+                remote_version=remote if isinstance(remote, int) else None,
             )
         if payload.get("version") != version:
             return ReplicationResult(
@@ -146,6 +153,22 @@ class Replicator:
             full_tokens=payload.get("full_tokens"),
             stub=payload.get("stub"),
         )
+
+    async def delete(self, key: str, max_version: int) -> bool:
+        """Delete ``key`` on Node B up to ``max_version``.  True once settled.
+
+        "Settled" means Node B no longer holds a version <= ``max_version``:
+        it deleted it, never had it, or holds a newer version.
+        """
+        try:
+            response = await self.client.delete(
+                f"{self.base_url}/archive/{quote(key, safe='')}",
+                params={"version": max_version},
+                timeout=self.timeout_s,
+            )
+        except Exception:
+            return False
+        return response.status_code == 200
 
     async def search(self, q: str, limit: int = 5) -> list[dict[str, Any]] | None:
         """Proxy to Node B /search.  Returns None on any error."""

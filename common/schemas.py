@@ -60,6 +60,14 @@ class NodeBHealth(BaseModel):
 
 class PutRequest(BaseModel):
     text: str
+    # Optional eviction policy; omitted fields keep the key's current setting.
+    pinned: bool | None = None
+    priority: int | None = Field(default=None, ge=-100, le=100)
+
+
+class PolicyRequest(BaseModel):
+    pinned: bool | None = None
+    priority: int | None = Field(default=None, ge=-100, le=100)
 
 
 class PutResponse(BaseModel):
@@ -91,7 +99,7 @@ class HydrateResponse(BaseModel):
     version: int
     full_text: str
     full_tokens: int
-    source: Literal["L1", "L2_PAGE_FAULT"]
+    source: Literal["L1", "L1_SPILL", "L2_PAGE_FAULT"]
 
 
 class KeyStatus(BaseModel):
@@ -102,7 +110,10 @@ class KeyStatus(BaseModel):
     full_tokens_on_node_b: int | None
     eviction_allowed: bool
     replication_error: str | None
-    prompt_view: str
+    pinned: bool = False
+    priority: int = 0
+    # None when /context/status is called with include_text=false.
+    prompt_view: str | None
 
 
 class StatusResponse(BaseModel):
@@ -110,7 +121,9 @@ class StatusResponse(BaseModel):
     max_window_tokens: int
     over_budget: bool
     tokens_saved_by_replication: int
+    tokens_spilled_locally: int = 0
     page_faults: int
+    pending_deletes: int = 0
     omitted_from_prompt: int = 0
     index_tokens: int = 0
     keys: dict[str, KeyStatus]

@@ -1,9 +1,14 @@
 """Bounded active window (L1) for Node A and all of its state transitions.
 
-The central rule is the dirty-bit rule: a block may be represented by its stub
-only after Node B has acknowledged the *exact same version*.  Everything else
-stays resident in full, even when that pushes the window over budget.  Safety
-wins over the token cap.
+The central rule is the dirty-bit rule: a block's full text may be dropped from
+Node A only after Node B has acknowledged the *exact same version*.
+
+A dirty block may still leave the *prompt* while Node B is unreachable: it is
+"spilled" to Node A's local disk (the fsync'd JSON state file, which already
+holds its full text) and shown as a ``[SPILLED ...]`` stub.  Its full text is
+never dropped; once Node B acks that version it becomes an ordinary paged block.
+With ``spill_dirty=False`` dirty blocks stay resident and the window may go over
+budget instead.  Safety always wins over the token cap.
 """
 
 from __future__ import annotations
@@ -17,6 +22,7 @@ import time
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any
 
+from common.summarizer import build_stub
 from common.tokens import count_tokens
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -26,12 +32,13 @@ logger = logging.getLogger("pagerkv.node_a.state")
 
 RESIDENT_FULL = "RESIDENT_FULL"
 PAGED_TO_NODE_B = "PAGED_TO_NODE_B"
+SPILLED_LOCAL = "SPILLED_LOCAL"
 
 PENDING_REPLICATION = "PENDING_REPLICATION"
 SYNCED_ARCHIVED = "SYNCED_ARCHIVED"
 DIRTY_UNREPLICATED = "DIRTY_UNREPLICATED"
 
-_RESIDENCES = {RESIDENT_FULL, PAGED_TO_NODE_B}
+_RESIDENCES = {RESIDENT_FULL, PAGED_TO_NODE_B, SPILLED_LOCAL}
 _STATUSES = {PENDING_REPLICATION, SYNCED_ARCHIVED, DIRTY_UNREPLICATED}
 
 
@@ -102,6 +109,10 @@ class KeyEntry:
     created_at: float
     last_access: float
     pinned_until_compaction: bool = False
+    # Caller-controlled eviction policy: pinned keys stay resident; among
+    # evictable keys the lowest priority goes first, then least recently used.
+    pinned: bool = False
+    priority: int = 0
 
     @property
     def active_tokens(self) -> int:
@@ -120,6 +131,20 @@ class KeyEntry:
             and self.stub is not None
         )
 
+    @property
+    def spill_allowed(self) -> bool:
+        """Dirty, resident, unpinned blocks may move to the local spill."""
+        return (
+            self.residence == RESIDENT_FULL
+            and self.consistency_status == DIRTY_UNREPLICATED
+            and self.full_text is not None
+            and not self.pinned
+        )
+
+    @property
+    def eviction_key(self) -> tuple[int, float]:
+        return (self.priority, self.last_access)
+
 
 class NodeAState:
     """All Node A state plus the compaction / hydration algorithms."""
@@ -129,11 +154,15 @@ class NodeAState:
         max_window_tokens: int = 2000,
         state_file: str = "node_a_state.json",
         index_budget_tokens: int = 150,
+        spill_dirty: bool = True,
     ) -> None:
         self.max_window_tokens = max_window_tokens
         self.index_budget_tokens = index_budget_tokens
+        self.spill_dirty = spill_dirty
         self.state_file = state_file
         self.entries: dict[str, KeyEntry] = {}
+        # key -> highest version deleted locally whose Node B copy may remain.
+        self.tombstones: dict[str, int] = {}
         self.page_faults = 0
         self.over_budget = False
         self._lock = asyncio.Lock()
@@ -154,6 +183,7 @@ class NodeAState:
             tmp_path = f"{self.state_file}.tmp"
             payload = {
                 "page_faults": self.page_faults,
+                "tombstones": self.tombstones,
                 "keys": {key: asdict(entry) for key, entry in self.entries.items()},
             }
             with open(tmp_path, "w", encoding="utf-8") as handle:
@@ -181,6 +211,12 @@ class NodeAState:
             self.page_faults = int(payload.get("page_faults", 0))
         except (TypeError, ValueError):
             self.page_faults = 0
+
+        raw_tombstones = payload.get("tombstones")
+        if isinstance(raw_tombstones, dict):
+            for key, version in raw_tombstones.items():
+                if isinstance(key, str) and isinstance(version, int):
+                    self.tombstones[key] = version
 
         raw_keys = payload.get("keys")
         if not isinstance(raw_keys, dict):
@@ -214,6 +250,8 @@ class NodeAState:
                 replication_error = raw.get("replication_error")
                 if replication_error is not None:
                     replication_error = str(replication_error)
+                pinned = bool(raw.get("pinned", False))
+                priority = int(raw.get("priority", 0))
             except (TypeError, ValueError):
                 logger.warning("skipping malformed state entry %r", key)
                 continue
@@ -225,6 +263,15 @@ class NodeAState:
             if consistency not in _STATUSES:
                 consistency = DIRTY_UNREPLICATED
                 replication_error = replication_error or "invalid stored status"
+
+            if residence == SPILLED_LOCAL and full_text is None:
+                # A spill always keeps the full text; without it the entry can
+                # only be what Node B holds.
+                if stub is not None and acked_version == version:
+                    residence = PAGED_TO_NODE_B
+                else:
+                    logger.warning("skipping spilled entry without text %r", key)
+                    continue
 
             if full_text is None and residence == RESIDENT_FULL:
                 if stub is not None:
@@ -265,6 +312,8 @@ class NodeAState:
                 created_at=created_at,
                 last_access=last_access,
                 pinned_until_compaction=False,
+                pinned=pinned,
+                priority=priority,
             )
 
     # ------------------------------------------------------------------
@@ -293,7 +342,7 @@ class NodeAState:
         """Render the prompt, returning (text, omitted_count, index_tokens).
 
         When the full block list fits, no index is rendered.  Otherwise the
-        oldest already-paged blocks are omitted and a single ``archive_index``
+        oldest non-resident (paged or spilled) blocks are omitted and a single ``archive_index``
         block is rendered first, listing them (newest omitted first) up to
         ``index_budget_tokens``.  Resident full blocks are never omitted; dirty
         residents can therefore still push the prompt over the cap, which is
@@ -307,7 +356,7 @@ class NodeAState:
             return full_prompt, 0, 0
 
         paged_indices = [
-            i for i, e in enumerate(ordered) if e.residence == PAGED_TO_NODE_B
+            i for i, e in enumerate(ordered) if e.residence != RESIDENT_FULL
         ]
         if not paged_indices:
             return full_prompt, 0, 0
@@ -396,6 +445,13 @@ class NodeAState:
         blocks = [self._block_text(e) for e in ordered]
         return count_tokens("\n\n".join(blocks))
 
+    def tokens_spilled_locally(self) -> int:
+        saved = 0
+        for entry in self.entries.values():
+            if entry.residence == SPILLED_LOCAL:
+                saved += entry.full_tokens - count_tokens(entry.stub or "")
+        return saved
+
     def total_active_tokens(self) -> int:
         """Sum of every key's current contribution (full text or stub)."""
         return sum(entry.active_tokens for entry in self.entries.values())
@@ -412,25 +468,52 @@ class NodeAState:
     # ------------------------------------------------------------------
 
     def compact(self) -> None:
-        """Page out LRU entries that are safe, then recompute over_budget.
+        """Bring the window under budget without ever dropping unacked data.
 
-        The caller MUST hold ``self._lock``.  Dirty / pending entries are never
-        candidates, so the window may remain over budget without losing data.
-        Eviction is driven by the full block list; if stubs alone cannot fit,
-        the rendered prompt drops the oldest cold stubs via render_prompt.
+        The caller MUST hold ``self._lock``.  Two passes, both lowest
+        ``priority`` first, then least recently used; pinned keys are skipped:
+
+        1. Page out blocks Node B has acked (full text dropped from Node A).
+        2. If still over budget and ``spill_dirty`` is on, spill dirty blocks
+           to the local disk: they leave the prompt but keep their full text.
+
+        Pending blocks (a replication call is in flight) and pinned blocks are
+        never moved, so the window can still end up over budget.  If stubs
+        alone cannot fit, render_prompt drops the oldest cold stubs.
         """
         while self.raw_window_tokens() > self.max_window_tokens:
             candidates = [
                 entry
                 for entry in self.entries.values()
-                if entry.eviction_allowed and not entry.pinned_until_compaction
+                if entry.eviction_allowed
+                and not entry.pinned
+                and not entry.pinned_until_compaction
             ]
             if not candidates:
                 break
-            victim = min(candidates, key=lambda entry: entry.last_access)
+            victim = min(candidates, key=lambda entry: entry.eviction_key)
             victim.full_text = None
             victim.residence = PAGED_TO_NODE_B
             logger.info("paged out %s v%s", victim.key, victim.version)
+
+        while self.spill_dirty and self.raw_window_tokens() > self.max_window_tokens:
+            candidates = [
+                entry
+                for entry in self.entries.values()
+                if entry.spill_allowed and not entry.pinned_until_compaction
+            ]
+            if not candidates:
+                break
+            victim = min(candidates, key=lambda entry: entry.eviction_key)
+            victim.stub = build_stub(
+                victim.key,
+                victim.version,
+                victim.full_text or "",
+                victim.full_tokens,
+                label="SPILLED",
+            )
+            victim.residence = SPILLED_LOCAL
+            logger.info("spilled dirty %s v%s to local disk", victim.key, victim.version)
 
         for entry in self.entries.values():
             entry.pinned_until_compaction = False
@@ -441,14 +524,23 @@ class NodeAState:
     # PUT
     # ------------------------------------------------------------------
 
-    async def put(self, key: str, text: str, replicator: "Replicator") -> dict[str, Any]:
+    async def put(
+        self,
+        key: str,
+        text: str,
+        replicator: "Replicator",
+        pinned: bool | None = None,
+        priority: int | None = None,
+    ) -> dict[str, Any]:
         now = time.time()
         async with self._lock:
             entry = self.entries.get(key)
             if entry is None:
                 entry = KeyEntry(
                     key=key,
-                    version=0,
+                    # Continue after a deleted version so a pending delete on
+                    # Node B can never remove the re-created key.
+                    version=self.tombstones.get(key, 0),
                     full_text=None,
                     full_tokens=0,
                     stub=None,
@@ -470,32 +562,41 @@ class NodeAState:
             entry.replication_error = None
             entry.last_access = now
             entry.pinned_until_compaction = False
+            if pinned is not None:
+                entry.pinned = pinned
+            if priority is not None:
+                entry.priority = priority
             version = entry.version
             self._persist()
 
-        # No lock is held across the network call.
-        result = await replicator.replicate(key, version, text)
+        # At most two attempts: the second only after reconciling with a newer
+        # version Node B already holds (e.g. Node A lost its state file).
+        for _attempt in range(2):
+            # No lock is held across the network call.
+            result = await replicator.replicate(key, version, text)
+            async with self._lock:
+                entry = self.entries.get(key)
+                if entry is None:
+                    raise KeyNotFound(key)
+                if entry.version != version:
+                    logger.info(
+                        "ignoring replication result for %s v%s; current version is v%s",
+                        key,
+                        version,
+                        entry.version,
+                    )
+                    break
+                self._apply_result(entry, version, result)
+                if entry.version == version:  # not reconciled: done
+                    break
+                version = entry.version
+                text = entry.full_text or text
+                self._persist()
 
         async with self._lock:
             entry = self.entries.get(key)
             if entry is None:
                 raise KeyNotFound(key)
-            if entry.version != version:
-                logger.info(
-                    "ignoring replication result for %s v%s; current version is v%s",
-                    key,
-                    version,
-                    entry.version,
-                )
-            elif result.ok:
-                entry.stub = result.stub
-                entry.acked_version = version
-                entry.consistency_status = SYNCED_ARCHIVED
-                entry.replication_error = None
-            else:
-                entry.consistency_status = DIRTY_UNREPLICATED
-                entry.replication_error = result.error or "replication failed"
-
             self.compact()
             self._persist()
             return self._summary(entry)
@@ -527,6 +628,21 @@ class NodeAState:
                     "full_text": entry.full_text,
                     "full_tokens": entry.full_tokens,
                     "source": "L1",
+                }
+            if entry.residence == SPILLED_LOCAL and entry.full_text is not None:
+                # Local page fault: the spill holds the only full copy.
+                entry.residence = RESIDENT_FULL
+                entry.last_access = time.time()
+                entry.pinned_until_compaction = True
+                self.page_faults += 1
+                self.compact()
+                self._persist()
+                return {
+                    "key": entry.key,
+                    "version": entry.version,
+                    "full_text": entry.full_text,
+                    "full_tokens": entry.full_tokens,
+                    "source": "L1_SPILL",
                 }
             version = entry.version
             stub = entry.stub
@@ -594,6 +710,11 @@ class NodeAState:
                 self._apply_result(entry, version, result)
 
         async with self._lock:
+            tombstones = list(self.tombstones.items())
+        for key, version in tombstones:
+            await self._settle_delete(key, version, replicator)
+
+        async with self._lock:
             self.compact()
             self._persist()
 
@@ -601,31 +722,94 @@ class NodeAState:
     def _apply_result(
         entry: KeyEntry, version: int, result: "ReplicationResult"
     ) -> None:
+        """Apply Node B's answer for ``version`` (caller checked it is current)."""
         if result.ok:
             entry.stub = result.stub
             entry.acked_version = version
             entry.consistency_status = SYNCED_ARCHIVED
             entry.replication_error = None
-        else:
-            entry.consistency_status = DIRTY_UNREPLICATED
-            entry.replication_error = result.error or "replication failed"
+            if entry.residence == SPILLED_LOCAL:
+                # Node B now holds this exact version: the spill can be dropped.
+                entry.residence = PAGED_TO_NODE_B
+                entry.full_text = None
+            return
+        entry.consistency_status = DIRTY_UNREPLICATED
+        if (
+            result.stale
+            and result.remote_version is not None
+            and result.remote_version >= version
+        ):
+            # Node B is ahead (Node A lost its state, or a delete is pending
+            # there).  Our text is the newest write, so jump past Node B's
+            # version; the retry will then be accepted.
+            entry.version = result.remote_version + 1
+            entry.replication_error = (
+                f"reconciled: Node B held v{result.remote_version}, "
+                f"retrying as v{entry.version}"
+            )
+            if entry.residence == SPILLED_LOCAL and entry.full_text is not None:
+                entry.stub = build_stub(
+                    entry.key, entry.version, entry.full_text, entry.full_tokens,
+                    label="SPILLED",
+                )
+            return
+        entry.replication_error = result.error or "replication failed"
 
     # ------------------------------------------------------------------
     # DELETE / status / prompt / summaries
     # ------------------------------------------------------------------
 
-    async def delete(self, key: str) -> bool:
+    async def delete(self, key: str, replicator: "Replicator | None" = None) -> bool:
+        """Remove ``key`` locally and (best effort, retried) from Node B."""
         async with self._lock:
-            existed = self.entries.pop(key, None) is not None
-            if existed:
-                self.compact()
-                self._persist()
-            return existed
+            entry = self.entries.pop(key, None)
+            if entry is None:
+                return False
+            version = max(entry.version, self.tombstones.get(key, 0))
+            self.tombstones[key] = version
+            self.compact()
+            self._persist()
+        if replicator is not None:
+            await self._settle_delete(key, version, replicator)
+        return True
 
-    async def status(self) -> dict[str, Any]:
+    async def _settle_delete(
+        self, key: str, version: int, replicator: "Replicator"
+    ) -> None:
+        if not await replicator.delete(key, version):
+            return  # Node B unreachable; the retry loop tries again
+        async with self._lock:
+            if self.tombstones.get(key) == version:
+                del self.tombstones[key]
+                self._persist()
+
+    async def set_policy(
+        self, key: str, pinned: bool | None, priority: int | None
+    ) -> dict[str, Any]:
+        """Change a key's pin / eviction priority, then re-compact."""
+        async with self._lock:
+            entry = self.entries.get(key)
+            if entry is None:
+                raise KeyNotFound(key)
+            if pinned is not None:
+                entry.pinned = pinned
+            if priority is not None:
+                entry.priority = priority
+            self.compact()
+            self._persist()
+            return self._summary(entry)
+
+    async def status(self, include_text: bool = True) -> dict[str, Any]:
         async with self._lock:
             keys: dict[str, Any] = {}
             for entry in self.entries.values():
+                prompt_view = None
+                if include_text:
+                    prompt_view = (
+                        entry.full_text
+                        if entry.residence == RESIDENT_FULL
+                        else (entry.stub or "")
+                    )
                 keys[entry.key] = {
                     "version": entry.version,
                     "residence": entry.residence,
@@ -636,11 +820,9 @@ class NodeAState:
                     ),
                     "eviction_allowed": entry.eviction_allowed,
                     "replication_error": entry.replication_error,
-                    "prompt_view": (
-                        entry.full_text
-                        if entry.residence == RESIDENT_FULL
-                        else (entry.stub or "")
-                    ),
+                    "pinned": entry.pinned,
+                    "priority": entry.priority,
+                    "prompt_view": prompt_view,
                 }
             prompt, omitted, index_tokens = self.render_prompt()
             window = count_tokens(prompt)
@@ -649,7 +831,9 @@ class NodeAState:
                 "max_window_tokens": self.max_window_tokens,
                 "over_budget": window > self.max_window_tokens,
                 "tokens_saved_by_replication": self.tokens_saved_by_replication(),
+                "tokens_spilled_locally": self.tokens_spilled_locally(),
                 "page_faults": self.page_faults,
+                "pending_deletes": len(self.tombstones),
                 "omitted_from_prompt": omitted,
                 "index_tokens": index_tokens,
                 "keys": keys,
@@ -660,25 +844,42 @@ class NodeAState:
             prompt, _omitted, _index = self.render_prompt()
             return {"prompt": prompt, "tokens": count_tokens(prompt)}
 
-    async def local_search(self, q: str) -> list[dict[str, Any]]:
+    async def local_search(
+        self, q: str, include_text: bool = False
+    ) -> list[dict[str, Any]]:
+        """Key-name matches; with ``include_text``, also local full texts.
+
+        Text matching is the fallback while Node B (and its full-text index)
+        is unreachable: resident and spilled blocks are still searchable.
+        """
         async with self._lock:
-            needle = (q or "").lower()
+            needle = (q or "").lower().strip()
             results: list[dict[str, Any]] = []
             if not needle:
                 return results
+            words = needle.split()
             for entry in self.entries.values():
+                score = 0.0
                 if needle in entry.key.lower():
-                    stub = entry.stub
-                    if stub is None:
-                        stub = (entry.full_text or "")[:120]
-                    results.append(
-                        {
-                            "key": entry.key,
-                            "version": entry.version,
-                            "stub": stub,
-                            "score": 1.0,
-                        }
-                    )
+                    score = 1.0
+                elif include_text and entry.full_text:
+                    text = entry.full_text.lower()
+                    hits = sum(1 for w in words if w in text)
+                    score = 0.9 * hits / len(words)
+                if score <= 0:
+                    continue
+                stub = entry.stub
+                if stub is None:
+                    stub = (entry.full_text or "")[:120]
+                results.append(
+                    {
+                        "key": entry.key,
+                        "version": entry.version,
+                        "stub": stub,
+                        "score": score,
+                    }
+                )
+            results.sort(key=lambda r: (-r["score"], r["key"]))
             return results
 
     # ------------------------------------------------------------------
