@@ -244,9 +244,11 @@ curl -s 'http://127.0.0.1:8001/context/search?q=obs_17&limit=5'
 curl -s http://127.0.0.1:8001/health
 ```
 
-`GET /context/status` and `GET /context/prompt` are registered before
-`GET /context/{key}`, so the literal words `status` and `prompt` are never
-treated as keys.
+Keys may contain slashes (`obs/turn-041`); the key routes use `{key:path}`, as
+Node B does. `GET /context/status`, `/context/prompt` and `/context/search` are
+registered first, so those three exact names are reserved: `PUT` with one of them
+returns 422 instead of storing a key that could never be read back. Names that
+only start with them (`status-report`, `search/history`) are ordinary keys.
 
 Hydration failures are explicit:
 

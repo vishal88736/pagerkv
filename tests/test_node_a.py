@@ -230,3 +230,18 @@ def test_keys_with_slashes_round_trip(a_client, b_client) -> None:
 
     assert a_client.delete(f"/context/{key}").status_code == 204
     assert a_client.get(f"/context/{key}").status_code == 404
+
+
+def test_reserved_keys_are_rejected(a_client) -> None:
+    """Keys shadowed by static routes can't be written, so none become unreadable."""
+    for key in ("status", "prompt", "search"):
+        r = a_client.put(f"/context/{key}", json={"text": "should not be stored"})
+        assert r.status_code == 422, r.text
+        assert "reserved" in r.json()["detail"]
+        assert key not in a_client.get("/context/status").json()["keys"]
+
+    # Only the exact names are reserved; prefixes and nested paths are fine.
+    for key in ("status-report", "search/history"):
+        assert a_client.put(f"/context/{key}", json={"text": "fine"}).status_code == 200
+        assert a_client.get(f"/context/{key}").status_code == 200
+        assert a_client.delete(f"/context/{key}").status_code == 204

@@ -33,6 +33,10 @@ logger = logging.getLogger("pagerkv.node_a")
 
 UI_FILE = Path(__file__).resolve().parents[1] / "ui" / "index.html"
 
+# Names served by static GET /context/<name> routes; a key with one of these
+# names could be written but never read back, so writes are rejected.
+RESERVED_KEYS = frozenset({"status", "prompt", "search"})
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -175,6 +179,11 @@ async def context_search(
 
 @app.put("/context/{key:path}", response_model=PutResponse)
 async def put_context(key: str, body: PutRequest, request: Request) -> dict:
+    if key in RESERVED_KEYS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"key {key!r} is reserved (conflicts with GET /context/{key})",
+        )
     try:
         return await _state(request).put(
             key, body.text, _replicator(request)
