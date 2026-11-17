@@ -1,0 +1,142 @@
+"""Node A contract tests: bounded window, LRU paging, hydration, prompt."""
+
+from __future__ import annotations
+
+import hashlib
+
+from common.tokens import count_tokens
+
+
+def _sha(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _put(a_client, key: str, text: str) -> dict:
+    response = a_client.put(f"/context/{key}", json={"text": text})
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _status(a_client) -> dict:
+    response = a_client.get("/context/status")
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_put_under_budget_keeps_full(a_client, key_factory, text_factory):
+    key = key_factory("nodea_under")
+    text = text_factory(500, seed=101)
+
+    ack = _put(a_client, key, text)
+    assert ack["version"] == 1
+    assert ack["consistency_status"] == "SYNCED_ARCHIVED"
+    assert ack["residence"] == "RESIDENT_FULL"
+    assert ack["full_tokens"] == count_tokens(text)
+    assert ack["active_tokens"] == ack["full_tokens"]
+
+    status = _status(a_client)
+    assert status["active_window_tokens"] <= 2000
+    row = status["keys"][key]
+    assert row["residence"] == "RESIDENT_FULL"
+    assert row["consistency_status"] == "SYNCED_ARCHIVED"
+    assert row["eviction_allowed"] is True
+
+    view = a_client.get(f"/context/{key}").json()
+    assert view["content"] == text
+    assert view["is_stub"] is False
+
+
+def test_put_over_budget_pages_out_lru(a_client, key_factory, text_factory):
+    keys = [key_factory(f"nodea_lru_{i}") for i in range(3)]
+    texts = {}
+    for i, key in enumerate(keys):
+        texts[key] = text_factory(850, seed=200 + i)
+        _put(a_client, key, texts[key])
+
+    status = _status(a_client)
+    assert status["active_window_tokens"] <= 2000
+    assert status["tokens_saved_by_replication"] > 0
+    assert status["keys"][keys[0]]["residence"] == "PAGED_TO_NODE_B"
+    assert status["keys"][keys[0]]["eviction_allowed"] is False
+    # The most recently used key stays resident.
+    assert status["keys"][keys[-1]]["residence"] == "RESIDENT_FULL"
+
+    stubbed = a_client.get(f"/context/{keys[0]}").json()
+    assert stubbed["is_stub"] is True
+    assert stubbed["content"].startswith("[STUB v1")
+
+
+def test_hydrate_restores_exact_text(a_client, key_factory, text_factory):
+    keys = [key_factory(f"nodea_hydrate_{i}") for i in range(3)]
+    texts = {}
+    for i, key in enumerate(keys):
+        texts[key] = text_factory(850, seed=300 + i)
+        _put(a_client, key, texts[key])
+
+    status = _status(a_client)
+    paged_key = next(
+        key
+        for key, row in status["keys"].items()
+        if row["residence"] == "PAGED_TO_NODE_B"
+    )
+    faults_before = status["page_faults"]
+
+    response = a_client.get(f"/context/{paged_key}?hydrate=true")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["source"] == "L2_PAGE_FAULT"
+    assert body["version"] == 1
+    assert _sha(body["full_text"]) == _sha(texts[paged_key])
+
+    after = _status(a_client)
+    assert after["page_faults"] == faults_before + 1
+
+
+def test_prompt_respects_budget(a_client, key_factory, text_factory):
+    keys = [key_factory(f"nodea_prompt_{i}") for i in range(3)]
+    for i, key in enumerate(keys):
+        _put(a_client, key, text_factory(850, seed=400 + i))
+
+    response = a_client.get("/context/prompt")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["tokens"] == count_tokens(body["prompt"])
+    assert body["tokens"] <= 2000
+
+    positions = [body["prompt"].index(f"### {key} (v1)") for key in keys]
+    assert positions == sorted(positions), "blocks must be ordered by created_at"
+
+
+def test_status_route_not_treated_as_key(a_client):
+    status = a_client.get("/context/status")
+    assert status.status_code == 200
+    payload = status.json()
+    assert "keys" in payload
+    assert "max_window_tokens" in payload
+    assert "status" not in payload["keys"]
+
+    prompt = a_client.get("/context/prompt")
+    assert prompt.status_code == 200
+    assert "prompt" in prompt.json() and "tokens" in prompt.json()
+
+
+def test_update_key_bumps_version(a_client, key_factory, text_factory):
+    key = key_factory("nodea_update")
+    v1 = text_factory(400, seed=501)
+    v2 = text_factory(420, seed=502)
+
+    first = _put(a_client, key, v1)
+    assert first["version"] == 1
+    second = _put(a_client, key, v2)
+    assert second["version"] == 2
+    assert second["consistency_status"] == "SYNCED_ARCHIVED"
+
+    view = a_client.get(f"/context/{key}").json()
+    assert view["version"] == 2
+    assert view["acked_version"] == 2
+    assert view["consistency_status"] == "SYNCED_ARCHIVED"
+    assert view["content"] == v2
+
+    hydrated = a_client.get(f"/context/{key}?hydrate=true").json()
+    assert hydrated["source"] == "L1"
+    assert _sha(hydrated["full_text"]) == _sha(v2)
