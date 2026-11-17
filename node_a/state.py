@@ -238,7 +238,19 @@ class NodeAState:
         """Sum of every key's current contribution (full text or stub)."""
         return sum(entry.active_tokens for entry in self.entries.values())
 
-    def build_prompt(self) -> str:
+    def build_prompt(self, trim_to_budget: bool = False) -> str:
+        """Render the prompt from the blocks ordered by created_at.
+
+        When ``trim_to_budget`` is true, the oldest already-paged blocks are
+        omitted from the rendered prompt if the fully-expanded stub list would
+        exceed MAX_WINDOW_TOKENS.  This is a *view* decision: the entries and
+        their stubs remain in Node A, their full text remains in Node B, and
+        they can still be hydrated by key.  With many live keys the stubs and
+        their ``###`` headers alone can cost more than the whole cap, so
+        dropping cold stubs from the view is the only way to honor the hard
+        budget without deleting data.  Resident full blocks are never trimmed;
+        dirty residents therefore still expose the true over-budget state.
+        """
         ordered = sorted(
             self.entries.values(), key=lambda entry: (entry.created_at, entry.key)
         )
@@ -249,16 +261,43 @@ class NodeAState:
             else:
                 body = entry.stub or ""
             blocks.append(f"### {entry.key} (v{entry.version})\n{body}")
-        return "\n\n".join(blocks)
+
+        if not trim_to_budget:
+            return "\n\n".join(blocks)
+
+        prompt = "\n\n".join(blocks)
+        if count_tokens(prompt) <= self.max_window_tokens:
+            return prompt
+
+        # Remove the oldest paged blocks from the rendered view, one at a
+        # time, until the prompt fits or only resident blocks are left.
+        removed: set[int] = set()
+        for index, entry in enumerate(ordered):
+            if entry.residence != PAGED_TO_NODE_B:
+                continue
+            removed.add(index)
+            candidate = "\n\n".join(
+                block for i, block in enumerate(blocks) if i not in removed
+            )
+            if count_tokens(candidate) <= self.max_window_tokens:
+                return candidate
+
+        return "\n\n".join(
+            block for i, block in enumerate(blocks) if i not in removed
+        )
 
     def window_tokens(self) -> int:
         """Actual rendered-prompt footprint, including ``###`` headers.
 
-        Compaction is enforced against this number (the spec explicitly allows
-        counting header overhead inside the budget).  Stub strings and headers
-        therefore cannot silently push the prompt over MAX_WINDOW_TOKENS.
+        Compaction is enforced against the full block list (see ``compact``),
+        while the rendered prompt may omit cold stubs to respect the hard cap.
+        ``over_budget`` is measured on this rendered prompt.
         """
-        return count_tokens(self.build_prompt())
+        return count_tokens(self.build_prompt(trim_to_budget=True))
+
+    def raw_window_tokens(self) -> int:
+        """Prompt footprint if every key is rendered, stubs included."""
+        return count_tokens(self.build_prompt(trim_to_budget=False))
 
     def tokens_saved_by_replication(self) -> int:
         saved = 0
@@ -276,8 +315,10 @@ class NodeAState:
 
         The caller MUST hold ``self._lock``.  Dirty / pending entries are never
         candidates, so the window may remain over budget without losing data.
+        Eviction is driven by the full block list; if stubs alone cannot fit,
+        the rendered prompt drops the oldest cold stubs (see build_prompt).
         """
-        while self.window_tokens() > self.max_window_tokens:
+        while self.raw_window_tokens() > self.max_window_tokens:
             candidates = [
                 entry
                 for entry in self.entries.values()
@@ -411,7 +452,11 @@ class NodeAState:
                     "archive version mismatch: key changed during hydrate"
                 )
             entry.full_text = fetched.full_text
-            entry.full_tokens = fetched.full_tokens
+            entry.full_tokens = (
+                fetched.full_tokens
+                if isinstance(fetched.full_tokens, int)
+                else entry.full_tokens
+            )
             entry.residence = RESIDENT_FULL
             entry.last_access = time.time()
             entry.pinned_until_compaction = True
@@ -422,7 +467,7 @@ class NodeAState:
                 "key": entry.key,
                 "version": entry.version,
                 "full_text": fetched.full_text,
-                "full_tokens": fetched.full_tokens,
+                "full_tokens": entry.full_tokens,
                 "source": "L2_PAGE_FAULT",
             }
 
@@ -510,7 +555,7 @@ class NodeAState:
 
     async def prompt(self) -> dict[str, Any]:
         async with self._lock:
-            prompt = self.build_prompt()
+            prompt = self.build_prompt(trim_to_budget=True)
             return {"prompt": prompt, "tokens": count_tokens(prompt)}
 
     # ------------------------------------------------------------------
