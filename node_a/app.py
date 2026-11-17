@@ -5,13 +5,15 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager, suppress
+from pathlib import Path
 from typing import AsyncIterator
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
 from common.schemas import (
+    FaultRequest,
     NodeAHealth,
     PromptResponse,
     PutRequest,
@@ -28,6 +30,8 @@ from node_a.state import (
 )
 
 logger = logging.getLogger("pagerkv.node_a")
+
+UI_FILE = Path(__file__).resolve().parents[1] / "ui" / "index.html"
 
 
 @asynccontextmanager
@@ -84,6 +88,45 @@ def _replicator(request: Request) -> Replicator:
 async def health(request: Request) -> NodeAHealth:
     reachable = await _replicator(request).health()
     return NodeAHealth(ok=True, node="A", node_b_reachable=reachable)
+
+
+# ---------------------------------------------------------------------------
+# Dashboard UI and Node B fault-injection proxy (same origin, so no CORS).
+# ---------------------------------------------------------------------------
+
+
+@app.get("/", include_in_schema=False)
+async def root() -> RedirectResponse:
+    return RedirectResponse(url="/ui")
+
+
+@app.get("/ui", include_in_schema=False)
+async def ui() -> FileResponse:
+    return FileResponse(UI_FILE, media_type="text/html")
+
+
+async def _proxy_fault(request: Request, method: str, body: dict | None = None):
+    replicator = _replicator(request)
+    try:
+        response = await replicator.client.request(
+            method,
+            f"{replicator.base_url}/admin/fault",
+            json=body,
+            timeout=min(2.0, replicator.timeout_s),
+        )
+    except httpx.HTTPError:
+        return JSONResponse(status_code=503, content={"error": "Node B unreachable"})
+    return JSONResponse(status_code=response.status_code, content=response.json())
+
+
+@app.get("/admin/node_b/fault")
+async def get_node_b_fault(request: Request):
+    return await _proxy_fault(request, "GET")
+
+
+@app.post("/admin/node_b/fault")
+async def set_node_b_fault(body: FaultRequest, request: Request):
+    return await _proxy_fault(request, "POST", body.model_dump())
 
 
 # ---------------------------------------------------------------------------

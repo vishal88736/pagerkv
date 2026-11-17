@@ -62,6 +62,11 @@ async def health() -> dict[str, object]:
     return {"ok": True, "node": "B"}
 
 
+@app.get("/admin/fault", response_model=FaultResponse)
+async def get_fault() -> FaultResponse:
+    return FaultResponse(mode=FAULT["mode"], delay_s=float(FAULT["delay_s"]))  # type: ignore[arg-type]
+
+
 @app.post("/admin/fault", response_model=FaultResponse)
 async def set_fault(request: FaultRequest) -> FaultResponse:
     FAULT["mode"] = request.mode

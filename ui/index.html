@@ -1,0 +1,639 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PagerKV Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#08090b; --bg2:#0c1014; --panel:rgba(14,19,24,.82); --panel-solid:#0e1318;
+  --line:rgba(140,190,220,.10); --line2:rgba(140,190,220,.18);
+  --text:#e8eef2; --muted:#8a97a3; --dim:#56626d;
+  --c1:#8fd6f5; --c2:#3f9cc8; --c3:#1f5f80; --c4:#143c52;
+  --ok:#3ddc97; --warn:#f2b45a; --bad:#ff6b6b;
+  --sans:"Manrope",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{
+  background:radial-gradient(1200px 700px at 70% 45%, #0f2230 0%, #0a1219 40%, var(--bg) 75%);
+  background-color:var(--bg); color:var(--text); font-family:var(--sans);
+  min-height:100vh; -webkit-font-smoothing:antialiased;
+}
+button,input,select,textarea{font:inherit;color:inherit}
+.mono{font-family:var(--mono)}
+
+/* ---------- top bar ---------- */
+.top{
+  display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+  padding:18px 28px; border-bottom:1px solid var(--line);
+  background:linear-gradient(180deg, rgba(20,30,38,.85), rgba(12,17,22,.6));
+  backdrop-filter:blur(10px); position:sticky; top:0; z-index:20;
+}
+.brand{display:flex; align-items:center; gap:10px; font-weight:600; font-size:20px; margin-right:18px; letter-spacing:.2px}
+.pill{
+  display:flex; align-items:center; gap:10px; padding:10px 18px; border-radius:999px;
+  background:rgba(255,255,255,.035); border:1px solid var(--line); color:var(--muted);
+  font-size:14px; white-space:nowrap; position:relative;
+}
+.pill b{color:var(--text); font-weight:500}
+.pill svg{flex:none}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--dim);box-shadow:0 0 0 3px rgba(255,255,255,.04)}
+.dot.ok{background:var(--ok);box-shadow:0 0 10px var(--ok)}
+.dot.bad{background:var(--bad);box-shadow:0 0 10px var(--bad)}
+.dot.warn{background:var(--warn);box-shadow:0 0 10px var(--warn)}
+.pill select{
+  appearance:none; background:transparent; border:0; color:var(--text); font-weight:500;
+  padding-right:18px; cursor:pointer; outline:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238a97a3' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat:no-repeat; background-position:right center;
+}
+.pill select option{background:var(--panel-solid)}
+.spacer{flex:1}
+.live{font-size:12px; color:var(--dim); display:flex; align-items:center; gap:8px}
+
+/* ---------- stage ---------- */
+.stage{position:relative; display:grid; grid-template-columns:300px 1fr; gap:24px; padding:28px; min-height:640px}
+.stats{display:flex; flex-direction:column; gap:16px; z-index:2}
+.card{
+  background:var(--panel); border:1px solid var(--line); padding:22px 24px;
+  backdrop-filter:blur(6px);
+}
+.card h3{margin:0; display:flex; align-items:center; gap:12px; font-size:15px; font-weight:500; color:var(--text)}
+.card h3 svg{color:var(--muted)}
+.big{font-size:44px; font-weight:300; letter-spacing:-.5px; margin:14px 0 0 32px; font-variant-numeric:tabular-nums}
+.big small{font-size:18px; color:var(--muted); font-weight:400; margin-left:4px}
+.chip{display:inline-flex; align-items:center; gap:6px; margin:12px 0 0 32px; padding:4px 10px; border-radius:999px; font-size:13px; font-variant-numeric:tabular-nums}
+.chip.ok{color:var(--ok); background:rgba(61,220,151,.09)}
+.chip.warn{color:var(--warn); background:rgba(242,180,90,.10)}
+.chip.bad{color:var(--bad); background:rgba(255,107,107,.10)}
+.chip.mut{color:var(--muted); background:rgba(255,255,255,.04)}
+
+.viz{position:relative; min-height:600px}
+.viz svg#iso{position:absolute; inset:0; width:100%; height:100%}
+.floor-label{font-family:var(--mono); font-size:11px; letter-spacing:1.5px; fill:var(--muted)}
+.blk{cursor:pointer; transition:opacity .25s}
+.blk:hover{filter:brightness(1.35)}
+.blk.sel{filter:brightness(1.6) drop-shadow(0 0 6px var(--c1))}
+
+/* composition panel (the "Network Traffic" analogue) */
+.comp{
+  position:absolute; left:0; bottom:0; width:min(560px,100%); z-index:3;
+  background:linear-gradient(115deg, rgba(14,20,26,.94) 0%, rgba(18,44,60,.88) 60%, rgba(30,80,108,.7) 100%);
+  border:1px solid var(--line2); padding:26px 30px 24px;
+}
+.comp h3{margin:0 0 22px; font-weight:500; font-size:17px}
+.seg{display:flex; height:120px; position:relative}
+.seg > div{position:relative; display:flex; flex-direction:column; justify-content:space-between; min-width:0; transition:flex-basis .5s ease}
+.seg .pct{font-size:34px; font-weight:300; padding:0 0 0 12px; border-left:1.5px solid currentColor; height:58px; line-height:46px; white-space:nowrap; overflow:hidden}
+.seg .bars{height:62px}
+.hatch{background-image:repeating-linear-gradient(90deg, currentColor 0 2px, transparent 2px 4px)}
+.budget{margin-top:14px; height:28px; position:relative; color:rgba(140,190,220,.22)}
+.budget .fill{position:absolute; inset:0 auto 0 0; color:var(--c2); opacity:.55; transition:width .5s ease}
+.budget .cap{position:absolute; top:-4px; bottom:-4px; width:1.5px; background:var(--bad); right:0}
+.budget-row{display:flex; justify-content:space-between; font-size:12px; color:var(--muted); margin-top:8px; font-variant-numeric:tabular-nums}
+.legend{margin-top:20px; display:flex; flex-direction:column; gap:12px}
+.legend div{display:flex; align-items:center; gap:12px; font-size:15px; color:#c5d0d8}
+.legend i{width:10px;height:10px;border-radius:50%;flex:none}
+.legend .lead{flex:1; border-bottom:1px dotted rgba(255,255,255,.18); transform:translateY(-3px)}
+.legend b{font-weight:500; color:var(--text); font-variant-numeric:tabular-nums; min-width:46px; text-align:right}
+
+.tip{
+  position:fixed; pointer-events:none; z-index:50; background:rgba(10,14,18,.96); border:1px solid var(--line2);
+  padding:10px 12px; font-size:12px; line-height:1.55; min-width:200px; display:none;
+}
+.tip .k{font-family:var(--mono); color:var(--c1); margin-bottom:4px}
+.tip .r{display:flex; justify-content:space-between; gap:16px; color:var(--muted)}
+.tip .r span:last-child{color:var(--text)}
+
+/* ---------- lower panels ---------- */
+.lower{display:grid; grid-template-columns:1.5fr 1fr; gap:24px; padding:0 28px 40px}
+.panel{background:var(--panel); border:1px solid var(--line); padding:22px 24px; min-width:0}
+.panel h3{margin:0 0 16px; font-size:15px; font-weight:500; display:flex; align-items:center; gap:10px}
+.panel h3 .sub{color:var(--dim); font-weight:400; font-size:13px; margin-left:auto}
+.tbl-wrap{overflow:auto; max-height:420px}
+table{width:100%; border-collapse:collapse; font-size:13px}
+th{text-align:left; font-weight:500; color:var(--dim); font-size:11px; letter-spacing:1px; text-transform:uppercase; padding:8px 10px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--panel-solid)}
+td{padding:9px 10px; border-bottom:1px solid rgba(255,255,255,.035); font-variant-numeric:tabular-nums; white-space:nowrap}
+tr.row{cursor:pointer}
+tr.row:hover td{background:rgba(143,214,245,.04)}
+tr.row.sel td{background:rgba(143,214,245,.08)}
+td.key{font-family:var(--mono); color:var(--c1); max-width:220px; overflow:hidden; text-overflow:ellipsis}
+.tag{font-size:11px; padding:2px 8px; border-radius:999px; font-family:var(--mono)}
+.tag.res{color:var(--c1); background:rgba(143,214,245,.08)}
+.tag.pg{color:var(--muted); background:rgba(255,255,255,.04)}
+.tag.ok{color:var(--ok); background:rgba(61,220,151,.08)}
+.tag.dirty{color:var(--warn); background:rgba(242,180,90,.10)}
+.tag.pend{color:#b7a4ff; background:rgba(183,164,255,.08)}
+.lock{color:var(--warn)}
+.empty{color:var(--dim); font-size:13px; padding:24px 0; text-align:center}
+
+.field{display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px}
+.field input,.field textarea{
+  flex:1; background:rgba(0,0,0,.3); border:1px solid var(--line2); padding:10px 12px; outline:none; min-width:0;
+}
+.field textarea{min-height:76px; resize:vertical; font-family:var(--mono); font-size:12px}
+.field input:focus,.field textarea:focus{border-color:var(--c2)}
+.btn{background:rgba(63,156,200,.14); border:1px solid rgba(63,156,200,.45); color:var(--c1); padding:9px 16px; cursor:pointer; white-space:nowrap}
+.btn:hover{background:rgba(63,156,200,.24)}
+.btn.ghost{background:transparent; border-color:var(--line2); color:var(--muted)}
+.btn.danger{border-color:rgba(255,107,107,.4); color:var(--bad); background:rgba(255,107,107,.06)}
+.btn:disabled{opacity:.4; cursor:default}
+.side{display:flex; flex-direction:column; gap:24px; min-width:0}
+pre.out{margin:0; background:rgba(0,0,0,.35); border:1px solid var(--line); padding:12px; font-family:var(--mono); font-size:11.5px; line-height:1.55; color:#b9c6cf; max-height:260px; overflow:auto; white-space:pre-wrap; word-break:break-word}
+.detail-meta{display:grid; grid-template-columns:1fr 1fr; gap:6px 16px; font-size:12px; margin-bottom:12px}
+.detail-meta span{color:var(--dim)}
+.detail-meta b{font-weight:500; font-variant-numeric:tabular-nums}
+.res-list{display:flex; flex-direction:column; gap:6px; margin-top:4px}
+.res-list div{display:flex; justify-content:space-between; font-size:12.5px; padding:6px 8px; background:rgba(255,255,255,.02); cursor:pointer}
+.res-list div:hover{background:rgba(143,214,245,.06)}
+.res-list .k{font-family:var(--mono); color:var(--c1); overflow:hidden; text-overflow:ellipsis}
+.toast{position:fixed; right:20px; bottom:20px; z-index:60; background:var(--panel-solid); border:1px solid var(--line2); padding:12px 16px; font-size:13px; transform:translateY(120%); transition:transform .25s}
+.toast.show{transform:none}
+.banner{display:none; margin:16px 28px 0; padding:12px 16px; border:1px solid rgba(255,107,107,.35); background:rgba(255,107,107,.07); color:#ffb3b3; font-size:13px}
+
+@media (max-width:1100px){
+  .stage{grid-template-columns:1fr}
+  .viz{min-height:0}
+  .viz svg#iso{position:relative; display:block; height:640px}
+  .comp{position:relative; width:100%}
+  .stats{flex-direction:row; flex-wrap:wrap}
+  .stats .card{flex:1 1 220px}
+  .lower{grid-template-columns:1fr}
+}
+@media (max-width:640px){
+  .top{padding:12px 16px}
+  .stage{padding:16px; gap:16px}
+  .lower{padding:0 16px 24px}
+  .viz svg#iso{height:520px}
+  .comp{padding:20px}
+  .seg .pct{font-size:24px}
+  .big{font-size:34px}
+  .banner{margin:12px 16px 0}
+}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="brand">
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5" opacity=".55"/><rect x="3" y="14" width="7" height="7" rx="1.5" opacity=".55"/><rect x="14" y="14" width="7" height="7" rx="1.5" opacity=".3"/></svg>
+    PagerKV
+  </div>
+  <div class="pill" title="Node A (L1) health">
+    <span class="dot" id="dotA"></span>Node A: <b id="pillA">connecting…</b>
+  </div>
+  <div class="pill" title="Node B (L2) fault-injection mode">
+    <span class="dot" id="dotB"></span>Node B:
+    <select id="faultSel" aria-label="Node B fault mode">
+      <option value="none">Online</option>
+      <option value="slow">Slow (3s)</option>
+      <option value="down">Down</option>
+    </select>
+  </div>
+  <div class="pill" title="Active window tokens / budget">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>
+    Window: <b id="pillWin">–</b>
+  </div>
+  <div class="pill" title="Keys resident in L1 / paged to L2">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg>
+    Keys: <b id="pillKeys">–</b>
+  </div>
+  <div class="spacer"></div>
+  <div class="live"><span class="dot" id="dotLive"></span><span id="liveTxt">polling</span></div>
+</header>
+
+<div class="banner" id="banner"></div>
+
+<section class="stage">
+  <div class="stats">
+    <div class="card">
+      <h3><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 7h16M4 12h10M4 17h6"/></svg>Active Window</h3>
+      <div class="big" id="sWin">–</div>
+      <div class="chip mut" id="sWinChip">–</div>
+    </div>
+    <div class="card">
+      <h3><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>Page Faults</h3>
+      <div class="big" id="sPf">–</div>
+      <div class="chip mut" id="sPfChip">since start</div>
+    </div>
+    <div class="card">
+      <h3><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Tokens Saved</h3>
+      <div class="big" id="sSaved">–</div>
+      <div class="chip ok" id="sSavedChip">by replication</div>
+    </div>
+    <div class="card">
+      <h3><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Dirty Keys</h3>
+      <div class="big" id="sDirty">–</div>
+      <div class="chip mut" id="sDirtyChip">eviction blocked</div>
+    </div>
+  </div>
+
+  <div class="viz" id="viz">
+    <svg id="iso" role="img" aria-label="Isometric view of L1 window and L2 archive"></svg>
+    <div class="comp" id="comp">
+      <h3>Window Composition</h3>
+      <div class="seg" id="seg"></div>
+      <div class="budget hatch"><div class="fill hatch" id="budgetFill"></div><div class="cap"></div></div>
+      <div class="budget-row"><span id="budgetL">0 tokens</span><span id="budgetR">budget –</span></div>
+      <div class="legend" id="legend"></div>
+    </div>
+  </div>
+</section>
+
+<section class="lower">
+  <div class="panel">
+    <h3>Context Keys <span class="sub" id="keyCount"></span></h3>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Key</th><th>Ver</th><th>Residence</th><th>Consistency</th><th>L1 tok</th><th>Full tok</th><th></th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <div class="empty" id="emptyRows">No keys yet. Write one with the form on the right.</div>
+    </div>
+  </div>
+
+  <div class="side">
+    <div class="panel">
+      <h3>Inspect <span class="sub" id="selKey">select a key</span></h3>
+      <div class="detail-meta" id="detailMeta"></div>
+      <div class="field">
+        <button class="btn" id="btnHydrate" disabled>Page in (hydrate)</button>
+        <button class="btn ghost" id="btnView" disabled>View L1</button>
+        <button class="btn danger" id="btnDelete" disabled>Delete</button>
+      </div>
+      <pre class="out" id="detailOut">—</pre>
+    </div>
+
+    <div class="panel">
+      <h3>Write Context</h3>
+      <div class="field"><input id="putKey" placeholder="key, e.g. obs-turn-041" autocomplete="off"></div>
+      <div class="field"><textarea id="putText" placeholder="observation text…"></textarea></div>
+      <div class="field"><button class="btn" id="btnPut">PUT /context/{key}</button></div>
+    </div>
+
+    <div class="panel">
+      <h3>Search Archive</h3>
+      <div class="field"><input id="q" placeholder="search L1 keys + L2 full text" autocomplete="off"><button class="btn" id="btnSearch">Search</button></div>
+      <div class="res-list" id="results"></div>
+    </div>
+
+    <div class="panel">
+      <h3>Rendered Prompt <span class="sub" id="promptTok"></span></h3>
+      <pre class="out" id="prompt">—</pre>
+    </div>
+  </div>
+</section>
+
+<div class="tip" id="tip"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const fmt = n => (n == null ? "–" : Number(n).toLocaleString());
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const enc = k => encodeURIComponent(k);
+  const POLL_MS = 1500;
+
+  let status = null, selected = null, faultMode = "none", busy = false;
+
+  function toast(msg, bad) {
+    const t = $("toast"); t.textContent = msg; t.style.borderColor = bad ? "rgba(255,107,107,.5)" : "";
+    t.classList.add("show"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 2600);
+  }
+
+  async function api(path, opts = {}) {
+    const r = await fetch(path, { headers: { "content-type": "application/json" }, ...opts });
+    let body = null;
+    try { body = await r.json(); } catch { /* 204 or non-json */ }
+    return { ok: r.ok, status: r.status, body };
+  }
+
+  // ------------------------------------------------------------ polling
+  async function poll() {
+    if (busy) return;
+    busy = true;
+    try {
+      const [h, s, f] = await Promise.all([
+        api("/health"), api("/context/status"), api("/admin/node_b/fault")
+      ]);
+      $("dotLive").className = "dot ok"; $("liveTxt").textContent = "live · " + new Date().toLocaleTimeString();
+      $("banner").style.display = "none";
+      const bUp = !!(h.body && h.body.node_b_reachable);
+      $("dotA").className = "dot ok"; $("pillA").textContent = "Online";
+      if (f.ok && f.body) faultMode = f.body.mode;
+      if (document.activeElement !== $("faultSel")) $("faultSel").value = f.ok ? faultMode : "down";
+      const bState = !f.ok ? "bad" : faultMode === "down" ? "bad" : faultMode === "slow" ? "warn" : bUp ? "ok" : "bad";
+      $("dotB").className = "dot " + bState;
+      if (s.ok) { status = s.body; render(); }
+    } catch (e) {
+      $("dotLive").className = "dot bad"; $("liveTxt").textContent = "disconnected";
+      $("dotA").className = "dot bad"; $("pillA").textContent = "Offline";
+      const b = $("banner"); b.style.display = "block";
+      b.textContent = "Cannot reach Node A. Start the nodes with scripts/run_nodes.sh, then open http://127.0.0.1:8001/ui";
+    } finally { busy = false; }
+  }
+
+  async function loadPrompt() {
+    try {
+      const p = await api("/context/prompt");
+      if (p.ok) { $("prompt").textContent = p.body.prompt || "(empty)"; $("promptTok").textContent = fmt(p.body.tokens) + " tokens"; }
+    } catch { /* poll() reports connectivity */ }
+  }
+
+  // ------------------------------------------------------------ render
+  function classify(k) {
+    const resident = k.residence === "RESIDENT_FULL";
+    const dirty = k.consistency_status === "DIRTY_UNREPLICATED";
+    const pending = k.consistency_status === "PENDING_REPLICATION";
+    return { resident, dirty, pending };
+  }
+
+  function render() {
+    const s = status, keys = Object.entries(s.keys || {});
+    const resident = keys.filter(([, k]) => classify(k).resident);
+    const paged = keys.filter(([, k]) => !classify(k).resident);
+    const dirty = keys.filter(([, k]) => classify(k).dirty);
+
+    $("pillWin").textContent = `${fmt(s.active_window_tokens)} / ${fmt(s.max_window_tokens)}`;
+    $("pillKeys").textContent = `${resident.length} in L1 / ${paged.length} paged`;
+
+    $("sWin").innerHTML = `${fmt(s.active_window_tokens)}<small>tok</small>`;
+    const pct = s.max_window_tokens ? (s.active_window_tokens / s.max_window_tokens * 100) : 0;
+    const wc = $("sWinChip");
+    wc.className = "chip " + (s.over_budget ? "bad" : pct > 90 ? "warn" : "ok");
+    wc.textContent = s.over_budget ? `over budget · ${pct.toFixed(0)}%` : `${pct.toFixed(1)}% of budget`;
+    $("sPf").textContent = fmt(s.page_faults);
+    $("sSaved").innerHTML = `${fmt(s.tokens_saved_by_replication)}<small>tok</small>`;
+    $("sDirty").textContent = fmt(dirty.length);
+    const dc = $("sDirtyChip");
+    dc.className = "chip " + (dirty.length ? "warn" : "mut");
+    dc.textContent = dirty.length ? "eviction blocked" : "all replicated";
+
+    renderComposition(s, keys);
+    renderIso(resident, paged);
+    renderTable(keys);
+    renderDetailMeta();
+  }
+
+  function renderComposition(s, keys) {
+    let synced = 0, dirtyTok = 0, stubs = 0;
+    for (const [, k] of keys) {
+      const c = classify(k), t = k.active_tokens_in_node_a || 0;
+      if (!c.resident) stubs += t; else if (c.dirty || c.pending) dirtyTok += t; else synced += t;
+    }
+    const parts = [
+      { name: "Resident · synced", v: synced, color: "var(--c1)" },
+      { name: "Resident · dirty / pending", v: dirtyTok, color: "var(--warn)" },
+      { name: "Paged-out stubs", v: stubs, color: "var(--c2)" },
+      { name: "Archive index", v: s.index_tokens || 0, color: "var(--c3)" },
+    ];
+    const total = parts.reduce((a, p) => a + p.v, 0) || 1;
+    $("seg").innerHTML = parts.map(p => {
+      const pc = p.v / total * 100;
+      return `<div style="flex:0 0 ${pc}%;color:${p.color}">
+        <div class="pct" style="${pc < 18 ? "font-size:0;" : ""}">${pc.toFixed(0)}%</div>
+        <div class="bars hatch" style="opacity:${p.v ? 1 : 0}"></div></div>`;
+    }).join("");
+    $("legend").innerHTML = parts.map(p =>
+      `<div><i style="background:${p.color}"></i>${p.name}<span class="lead"></span><b>${fmt(p.v)}</b><b style="color:var(--muted);min-width:48px">${(p.v / total * 100).toFixed(0)}%</b></div>`).join("");
+    const used = s.active_window_tokens || 0, max = s.max_window_tokens || 1;
+    $("budgetFill").style.width = Math.min(100, used / max * 100) + "%";
+    $("budgetFill").style.color = s.over_budget ? "var(--bad)" : "var(--c2)";
+    $("budgetL").textContent = `${fmt(used)} tokens in window`;
+    $("budgetR").textContent = `budget ${fmt(max)}` + (s.omitted_from_prompt ? ` · ${s.omitted_from_prompt} omitted from prompt` : "");
+  }
+
+  // ------------------------------------------------------------ isometric view
+  const NS = "http://www.w3.org/2000/svg";
+  function poly(pts, attrs) {
+    const p = document.createElementNS(NS, "polygon");
+    p.setAttribute("points", pts.map(q => q.join(",")).join(" "));
+    for (const a in attrs) p.setAttribute(a, attrs[a]);
+    return p;
+  }
+
+  function renderIso(resident, paged) {
+    const svg = $("iso"), box = svg.getBoundingClientRect();
+    const W = box.width, H = box.height;
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    svg.innerHTML = `<defs>
+      <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8fd6f5" stop-opacity=".02"/><stop offset="1" stop-color="#8fd6f5" stop-opacity=".12"/></linearGradient>
+      <linearGradient id="glassBad" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff6b6b" stop-opacity=".02"/><stop offset="1" stop-color="#ff6b6b" stop-opacity=".12"/></linearGradient>
+      <filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    </defs>`;
+
+    const N = 8;                                   // grid cells per side
+    const overlay = getComputedStyle($("comp")).position === "absolute";
+    const compW = overlay ? $("comp").offsetWidth : 0;
+    // Fit two stacked floors: each diamond is N*cell tall, plus wall height, gap and labels.
+    const cellByH = (H - 60) / (2 * N + 7.5);
+    const cellByW = (overlay ? Math.max(W - compW - 60, W * 0.45) : W - 40) / (2 * N * 0.866);
+    const cell = Math.max(10, Math.min(36, cellByH, cellByW));
+    const halfW = N * cell * 0.866, wallH = cell * 3.2, gap = cell * 2.6;
+    let cx = overlay ? Math.max(W * 0.6, compW + halfW + 40) : W / 2;
+    cx = Math.min(cx, W - halfW - 48);   // leave room for the replication link
+    const top0 = 16 + wallH;                        // room for walls/blocks above the L1 plate
+    const iso = (gx, gy, z, oy) => [cx + (gx - gy) * cell * 0.866, oy + (gx + gy) * cell * 0.5 - z];
+
+    const bDown = faultMode === "down" || $("dotB").classList.contains("bad");
+    const floors = [
+      { name: "L1 · NODE A · ACTIVE WINDOW", items: resident, oy: top0, bad: false, l1: true },
+      { name: "L2 · NODE B · ARCHIVE" + (bDown ? " · OFFLINE" : ""), items: paged, oy: top0 + N * cell + gap + wallH * 0.6, bad: bDown, l1: false },
+    ];
+    const maxTok = Math.max(1, ...[...resident, ...paged].map(([, k]) => k.full_tokens_on_node_b || k.active_tokens_in_node_a || 1));
+
+    // replication link between the two floors (right corners)
+    const a = iso(N, 0, 0, floors[0].oy), b = iso(N, 0, 0, floors[1].oy);
+    const link = document.createElementNS(NS, "path");
+    link.setAttribute("d", `M${a[0]+10},${a[1]} h22 V${b[1]} h-22`);
+    link.setAttribute("fill", "none"); link.setAttribute("stroke", bDown ? "#ff6b6b" : "#8fd6f5");
+    link.setAttribute("stroke-opacity", ".5"); if (bDown) link.setAttribute("stroke-dasharray", "4 5");
+    svg.appendChild(link);
+    for (const [x, y] of [[a[0] + 10, a[1]], [b[0] + 10, b[1]]]) {
+      const c = document.createElementNS(NS, "circle");
+      c.setAttribute("cx", x); c.setAttribute("cy", y); c.setAttribute("r", 3.5);
+      c.setAttribute("fill", bDown ? "#ff6b6b" : "#8fd6f5"); svg.appendChild(c);
+    }
+    if (W - a[0] > 150) {
+      const mid = document.createElementNS(NS, "text");
+      mid.setAttribute("x", a[0] + 40); mid.setAttribute("y", (a[1] + b[1]) / 2 + 4);
+      mid.setAttribute("class", "floor-label"); if (bDown) mid.setAttribute("fill", "#ff8a8a");
+      mid.textContent = bDown ? "replication paused" : "replicate ↓ hydrate ↑";
+      svg.appendChild(mid);
+    }
+
+    for (const f of [...floors].reverse()) {
+      const oy = f.oy, g = document.createElementNS(NS, "g");
+      const P = (x, y, z) => iso(x, y, z, oy);
+      const stroke = f.bad ? "#ff6b6b" : "#8fd6f5", fill = f.bad ? "url(#glassBad)" : "url(#glass)";
+      const th = cell * 0.35;                       // slab thickness
+      // back glass walls (do not occlude blocks)
+      g.appendChild(poly([P(0,0,0), P(N,0,0), P(N,0,wallH), P(0,0,wallH)], { fill, stroke, "stroke-opacity": ".22" }));
+      g.appendChild(poly([P(0,0,0), P(0,N,0), P(0,N,wallH), P(0,0,wallH)], { fill, stroke, "stroke-opacity": ".22" }));
+      // floor plate with thickness
+      g.appendChild(poly([P(0,N,0), P(N,N,0), P(N,N,-th), P(0,N,-th)], { fill: f.bad ? "rgba(255,107,107,.10)" : "rgba(143,214,245,.10)", stroke, "stroke-opacity": ".35" }));
+      g.appendChild(poly([P(N,0,0), P(N,N,0), P(N,N,-th), P(N,0,-th)], { fill: f.bad ? "rgba(255,107,107,.06)" : "rgba(143,214,245,.06)", stroke, "stroke-opacity": ".35" }));
+      g.appendChild(poly([P(0,0,0), P(N,0,0), P(N,N,0), P(0,N,0)], { fill: f.bad ? "rgba(60,20,24,.55)" : "rgba(14,34,46,.55)", stroke, "stroke-opacity": ".45" }));
+      for (let i = 1; i < N; i++) {
+        for (const [p1, p2] of [[P(i,0,0), P(i,N,0)], [P(0,i,0), P(N,i,0)]]) {
+          const l = document.createElementNS(NS, "line");
+          l.setAttribute("x1", p1[0]); l.setAttribute("y1", p1[1]); l.setAttribute("x2", p2[0]); l.setAttribute("y2", p2[1]);
+          l.setAttribute("stroke", stroke); l.setAttribute("stroke-opacity", ".08"); g.appendChild(l);
+        }
+      }
+      // blocks, back-to-front (row-major order is already back-to-front for this projection)
+      const cap = N * N, items = f.items.slice(0, cap);
+      items.forEach(([key, k], i) => {
+        const gx = i % N, gy = Math.floor(i / N);
+        const c = classify(k);
+        const tok = f.l1 ? (k.active_tokens_in_node_a || 1) : (k.full_tokens_on_node_b || k.active_tokens_in_node_a || 1);
+        const h = cell * (0.35 + 2.4 * Math.sqrt(tok / maxTok));
+        const pad = 0.14, x0 = gx + pad, x1 = gx + 1 - pad, y0 = gy + pad, y1 = gy + 1 - pad;
+        const base = f.bad ? [255,107,107] : c.dirty ? [242,180,90] : c.pending ? [183,164,255] : f.l1 ? [143,214,245] : [63,156,200];
+        const rgb = (m, al) => `rgba(${base.map(v => Math.round(v * m)).join(",")},${al})`;
+        const blk = document.createElementNS(NS, "g");
+        blk.setAttribute("class", "blk" + (key === selected ? " sel" : ""));
+        if (c.dirty) blk.setAttribute("filter", "url(#glow)");
+        blk.appendChild(poly([P(x0,y1,0), P(x1,y1,0), P(x1,y1,h), P(x0,y1,h)], { fill: rgb(.55, .55), stroke: rgb(1, .5), "stroke-width": ".6" }));
+        blk.appendChild(poly([P(x1,y0,0), P(x1,y1,0), P(x1,y1,h), P(x1,y0,h)], { fill: rgb(.38, .55), stroke: rgb(1, .5), "stroke-width": ".6" }));
+        blk.appendChild(poly([P(x0,y0,h), P(x1,y0,h), P(x1,y1,h), P(x0,y1,h)], { fill: rgb(1, .75), stroke: rgb(1, .9), "stroke-width": ".6" }));
+        blk.addEventListener("mousemove", e => showTip(e, key, k));
+        blk.addEventListener("mouseleave", hideTip);
+        blk.addEventListener("click", () => select(key));
+        g.appendChild(blk);
+      });
+      // label under the front corner
+      const lp = P(N, N, -th), t = document.createElementNS(NS, "text");
+      t.setAttribute("x", lp[0]); t.setAttribute("y", lp[1] + 20); t.setAttribute("text-anchor", "middle");
+      t.setAttribute("class", "floor-label"); if (f.bad) t.setAttribute("fill", "#ff8a8a");
+      t.textContent = `${f.name} · ${f.items.length}` + (f.items.length > cap ? ` (${cap} shown)` : "");
+      g.appendChild(t);
+      svg.appendChild(g);
+    }
+  }
+  function showTip(e, key, k) {
+    const t = $("tip");
+    t.innerHTML = `<div class="k">${esc(key)}</div>
+      <div class="r"><span>version</span><span>${k.version}</span></div>
+      <div class="r"><span>residence</span><span>${esc(k.residence)}</span></div>
+      <div class="r"><span>consistency</span><span>${esc(k.consistency_status)}</span></div>
+      <div class="r"><span>L1 tokens</span><span>${fmt(k.active_tokens_in_node_a)}</span></div>
+      <div class="r"><span>full tokens</span><span>${fmt(k.full_tokens_on_node_b)}</span></div>
+      <div class="r"><span>evictable</span><span>${k.eviction_allowed ? "yes" : "no"}</span></div>`;
+    t.style.display = "block";
+    const x = Math.min(e.clientX + 14, innerWidth - t.offsetWidth - 8), y = Math.min(e.clientY + 14, innerHeight - t.offsetHeight - 8);
+    t.style.left = x + "px"; t.style.top = y + "px";
+  }
+  function hideTip() { $("tip").style.display = "none"; }
+
+  // ------------------------------------------------------------ table + detail
+  function tagRes(r) { return r === "RESIDENT_FULL" ? `<span class="tag res">resident</span>` : `<span class="tag pg">paged</span>`; }
+  function tagCon(c) {
+    if (c === "SYNCED_ARCHIVED") return `<span class="tag ok">synced</span>`;
+    if (c === "DIRTY_UNREPLICATED") return `<span class="tag dirty">dirty</span>`;
+    return `<span class="tag pend">${esc(c.toLowerCase().replace(/_/g, " "))}</span>`;
+  }
+
+  function renderTable(keys) {
+    $("keyCount").textContent = `${keys.length} total`;
+    $("emptyRows").style.display = keys.length ? "none" : "block";
+    $("rows").innerHTML = keys.map(([key, k]) => `
+      <tr class="row${key === selected ? " sel" : ""}" data-key="${esc(key)}">
+        <td class="key" title="${esc(key)}">${esc(key)}</td>
+        <td>${k.version}</td>
+        <td>${tagRes(k.residence)}</td>
+        <td>${tagCon(k.consistency_status)}</td>
+        <td>${fmt(k.active_tokens_in_node_a)}</td>
+        <td>${fmt(k.full_tokens_on_node_b)}</td>
+        <td>${k.eviction_allowed || k.residence !== "RESIDENT_FULL" ? "" : `<span class="lock" title="${esc(k.replication_error || "not evictable until acked")}">●</span>`}</td>
+      </tr>`).join("");
+  }
+  $("rows").addEventListener("click", e => { const tr = e.target.closest("tr.row"); if (tr) select(tr.dataset.key); });
+
+  function renderDetailMeta() {
+    const k = selected && status && status.keys[selected];
+    for (const b of ["btnHydrate", "btnView", "btnDelete"]) $(b).disabled = !k;
+    if (!k) { $("detailMeta").innerHTML = ""; $("selKey").textContent = selected ? "deleted" : "select a key"; return; }
+    $("selKey").textContent = selected;
+    $("detailMeta").innerHTML = `
+      <span>version</span><b>${k.version}</b>
+      <span>residence</span><b>${esc(k.residence)}</b>
+      <span>consistency</span><b>${esc(k.consistency_status)}</b>
+      <span>evictable</span><b>${k.eviction_allowed ? "yes" : "no"}</b>
+      ${k.replication_error ? `<span>last error</span><b style="color:var(--bad)">${esc(k.replication_error)}</b>` : ""}`;
+  }
+
+  function select(key) {
+    selected = key;
+    if (status) render();
+    const k = status && status.keys[key];
+    $("detailOut").textContent = k ? (k.prompt_view || "—") : "—";
+  }
+
+  $("btnView").onclick = async () => {
+    const r = await api(`/context/${enc(selected)}`);
+    $("detailOut").textContent = r.ok ? r.body.content : `HTTP ${r.status}\n` + JSON.stringify(r.body, null, 2);
+  };
+  $("btnHydrate").onclick = async () => {
+    const r = await api(`/context/${enc(selected)}?hydrate=true`);
+    if (r.ok) {
+      $("detailOut").textContent = r.body.full_text;
+      toast(r.body.source === "L2_PAGE_FAULT" ? `Page fault: ${selected} hydrated from Node B` : `${selected} served from L1`);
+    } else {
+      $("detailOut").textContent = `HTTP ${r.status}\n` + JSON.stringify(r.body, null, 2);
+      toast(r.status === 503 ? "Node B unavailable: returned stub" : `Hydrate failed (${r.status})`, true);
+    }
+    poll(); loadPrompt();
+  };
+  $("btnDelete").onclick = async () => {
+    if (!confirm(`Delete ${selected} from Node A?`)) return;
+    const r = await api(`/context/${enc(selected)}`, { method: "DELETE" });
+    toast(r.ok ? `Deleted ${selected}` : `Delete failed (${r.status})`, !r.ok);
+    selected = null; $("detailOut").textContent = "—"; poll(); loadPrompt();
+  };
+
+  $("btnPut").onclick = async () => {
+    const key = $("putKey").value.trim(), text = $("putText").value;
+    if (!key || !text.trim()) { toast("Key and text are required", true); return; }
+    const r = await api(`/context/${enc(key)}`, { method: "PUT", body: JSON.stringify({ text }) });
+    if (r.ok) {
+      toast(`v${r.body.version} · ${r.body.consistency_status.toLowerCase().replace(/_/g, " ")}${r.body.over_budget ? " · OVER BUDGET" : ""}`, r.body.over_budget);
+      $("putText").value = ""; select(key);
+    } else toast(`PUT failed (${r.status})`, true);
+    poll(); loadPrompt();
+  };
+
+  async function search() {
+    const q = $("q").value.trim();
+    if (!q) { $("results").innerHTML = ""; return; }
+    const r = await api(`/context/search?q=${encodeURIComponent(q)}&limit=10`);
+    if (!r.ok) { $("results").innerHTML = `<div style="color:var(--bad);cursor:default">HTTP ${r.status}: ${esc(r.body && r.body.error)}</div>`; return; }
+    const res = r.body.results || [];
+    $("results").innerHTML = res.length
+      ? res.map(x => `<div data-key="${esc(x.key)}"><span class="k">${esc(x.key)}</span><span class="mono" style="color:var(--muted)">${x.score != null ? Number(x.score).toFixed(2) : ""}</span></div>`).join("")
+      : `<div style="cursor:default;color:var(--dim)">no matches</div>`;
+  }
+  $("btnSearch").onclick = search;
+  $("q").addEventListener("keydown", e => { if (e.key === "Enter") search(); });
+  $("results").addEventListener("click", e => { const d = e.target.closest("[data-key]"); if (d) select(d.dataset.key); });
+
+  $("faultSel").addEventListener("change", async e => {
+    const mode = e.target.value;
+    const r = await api("/admin/node_b/fault", { method: "POST", body: JSON.stringify({ mode, delay_s: mode === "slow" ? 3 : 0 }) });
+    toast(r.ok ? `Node B fault mode → ${mode}` : `Could not reach Node B (${r.status})`, !r.ok || mode !== "none");
+    poll();
+  });
+
+  addEventListener("resize", () => { if (status) render(); });
+  poll(); loadPrompt();
+  setInterval(poll, POLL_MS);
+  setInterval(loadPrompt, POLL_MS * 3);
+})();
+</script>
+</body>
+</html>

@@ -165,6 +165,28 @@ python bench/plot.py
 Ctrl-C/TERM. `python` must be the interpreter with the requirements installed
 (activate a virtualenv first, or set `PYTHON=/path/to/python`).
 
+## Dashboard
+
+With the nodes running, open **http://127.0.0.1:8001/ui** (`/` redirects there).
+It is one static file (`ui/index.html`, no build step) served by Node A. It polls
+`/health`, `/context/status` and `/context/prompt` every 1.5 s, so it needs no CORS.
+
+- **Top bar:** Node A health, Node B fault mode (a dropdown to switch it between
+  online, slow and down), window tokens against the budget, and resident vs. paged key counts.
+- **Stat cards:** active window tokens, page faults, tokens saved by replication,
+  and dirty keys (eviction blocked).
+- **Isometric view:** the L1 floor shows keys resident on Node A and the L2 floor shows keys
+  paged to Node B. Block height scales with tokens. Dirty keys glow amber, pending keys
+  are violet, and the L2 floor turns red while Node B is down. Hover a block to see its
+  key status, or click it to inspect it.
+- **Window composition:** synced, dirty/pending, stub and archive-index tokens
+  as shares of the active window, plus a bar for budget usage.
+- **Panels:** a key table, inspect (view the L1 copy, hydrate it as a page fault, or delete it),
+  a form to PUT new context, archive search, and the rendered prompt.
+
+The Node B dropdown uses `GET/POST /admin/node_b/fault` on Node A, which proxies to
+Node B's `/admin/fault`. Node B now also answers `GET /admin/fault`.
+
 ## API examples
 
 ### Node B
@@ -308,6 +330,8 @@ pagerkv/
     archive.py         # SQLite archive, stale-write guard
     summarizer.py      # deterministic extractive stubs
     app.py             # FastAPI routes + fault injection for L2
+  ui/
+    index.html         # dashboard, served by Node A at /ui
   bench/
     run_benchmark.py
     plot.py
@@ -320,6 +344,7 @@ pagerkv/
     test_node_b.py
     test_node_a.py
     test_fault_tolerance.py
+    test_ui.py
 ```
 
 ## Why versioned acks matter
