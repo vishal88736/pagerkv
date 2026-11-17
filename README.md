@@ -5,11 +5,15 @@ anything it has observed. **Node A** is the agent's RAM: it holds the blocks
 currently in the prompt and keeps their total (including headers) at or below
 `MAX_WINDOW_TOKENS` (2000 by default). **Node B** is the disk: a lossless
 SQLite archive holding every version of every block plus a short stub for each.
-Node A may replace a full block with its stub only after Node B has acknowledged
-that *exact* version. If Node B is down, slow, or errors, the block is dirty and
-stays in Node A in full, even if that pushes the prompt over budget. Hydration
-(`GET /context/{key}?hydrate=true`) pages the full text back from Node B, so data
-is never lost and a stub is never mistaken for the real thing.
+Node A may drop a block's full text only after Node B has acknowledged that
+*exact* version. If Node B is down, slow, or errors, the block is dirty: Node A
+keeps its full text in its own fsync'd state file and, if the window is full,
+*spills* it out of the prompt as a `[SPILLED ...]` stub until Node B is back.
+Hydration (`GET /context/{key}?hydrate=true`) brings the full text back from
+Node B or from the local spill, so data is never lost and a stub is never
+mistaken for the real thing.
+
+A live dashboard is served at **http://127.0.0.1:8001/ui** (see [Dashboard](#dashboard)).
 
 ## Architecture
 
@@ -22,8 +26,9 @@ is never lost and a stub is never mistaken for the real thing.
                  |  Node A (L1, RAM) :8001 |
                  |                         |
                  |  full blocks + stubs    |       PUT /replicate (versioned, 2s timeout)
-                 |  LRU compaction         |  <-------------------------------------------+
+                 |  priority/LRU compaction|  <-------------------------------------------+
                  |  dirty-bit guard        |       GET /archive/{key}   (page fault)    |
+                 |  local spill (dirty)    |       DELETE /archive/{key}?version=N      |
                  +------------+------------+  ------------------------------------------->+
                               |                                                             |
                               |  Node A -> Node B                                          |
@@ -39,8 +44,9 @@ is never lost and a stub is never mistaken for the real thing.
      Agent prompt <-- Node A (L1) <--> Node B (L2) --> durable full text
 ```
 
-Node A is bounded and volatile-ish (it persists its state as JSON for restarts).
-Node B is the source of truth for full text. "RAM" and "disk" are roles, not
+Node A is bounded and persists its state as JSON (atomic write + fsync) for
+restarts; that file is also where spilled dirty blocks keep their full text.
+Node B is the source of truth for full text once a version is acked. "RAM" and "disk" are roles, not
 implementation claims: both nodes are FastAPI services, and Node A also writes a
 small JSON checkpoint.
 
@@ -65,27 +71,43 @@ Consistency (per key):
 
 An ack whose version != entry.version is ignored. It can never mark a newer
 version as synced.
+
+If Node B answers "stale write" because it already holds a newer version
+(Node A lost its state file, or a delete is still pending there), Node A
+reconciles: it moves the key to Node B's version + 1 and retries, so the newest
+write wins instead of staying dirty forever.
 ```
 
 Residence (per key):
 
 ```
    RESIDENT_FULL  -- compact(): eviction_allowed only -->  PAGED_TO_NODE_B
-        ^                                                     |
-        |                                                     |
-        +------------- hydrate(): GET Node B full text --------+
-                     (only if archive version == entry.version)
+     ^      |  ^                                              |   ^
+     |      |  +------- hydrate(): GET Node B full text ------+   |
+     |      |          (only if archive version == entry.version) |
+     |      |                                                     |
+     |      +-- compact(): dirty, still over budget --> SPILLED_LOCAL
+     |                    (SPILL_DIRTY=1, full text kept)    |
+     +-------- hydrate(): served from the local spill -------+
+                                                             |
+                Node B acks this exact version --------------+--> PAGED_TO_NODE_B
 ```
+
+Compaction runs two passes, each choosing the lowest `priority` first and then
+the least recently used key, and never touching pinned keys: first it pages out
+blocks Node B has acked; then, only if still over budget, it spills dirty blocks.
 
 ## The six invariants
 
-1. A key is paged out **only** if `acked_version == version` and its status is
-   `SYNCED_ARCHIVED`.
-2. A `DIRTY_UNREPLICATED` or `PENDING_REPLICATION` key is **never** paged out,
-   even if the window is over budget.
-3. Data is never deleted from Node A unless Node B holds the same version.
-4. If the window cannot get under budget because the remaining full keys are
-   dirty, `over_budget` is `true`. Nothing is deleted or truncated.
+1. A key is paged out to Node B (its full text dropped from Node A) **only** if
+   `acked_version == version` and its status is `SYNCED_ARCHIVED`.
+2. A `DIRTY_UNREPLICATED` or `PENDING_REPLICATION` key is **never** paged out.
+   A dirty key may be *spilled*: it leaves the prompt, but its full text stays
+   in Node A's fsync'd state file until Node B acks that version.
+3. Data is never deleted from Node A unless Node B holds the same version (or
+   the caller deletes the key).
+4. If the window cannot get under budget (pending or pinned keys, or
+   `SPILL_DIRTY=0`), `over_budget` is `true`. Nothing is deleted or truncated.
 5. An ack for an old version is ignored. The key stays pending/dirty until its
    current version is acked.
 6. Every key in Node A is discoverable: it appears in the rendered prompt as full
@@ -114,9 +136,9 @@ tokens, with `+M more` for the rest). Those blocks remain in Node A's state
 (with their stubs) and in Node B (full text), are still listed by
 `/context/status` (`omitted_from_prompt`, `index_tokens`), and can still be
 hydrated by key or found via `GET /context/search`. Resident full blocks are
-never trimmed or omitted. During an outage, dirty residents are never trimmed
-or paged, so the prompt can exceed 2000 and `over_budget` is `true`; that is
-correct.
+never trimmed or omitted. During an outage, dirty blocks are spilled rather than
+paged, so the prompt stays within budget; with `SPILL_DIRTY=0` they stay
+resident and the prompt can exceed 2000 with `over_budget: true`.
 
 The index block is itself never omitted. Stubs are omitted only after the index
 block's budget is reserved, so the hard cap always holds when it can. This is
@@ -127,7 +149,22 @@ stays discoverable through the prompt, the index, or search (invariant 6).
 Node B also exposes `GET /search?q=<text>&limit=5` (SQLite FTS5, with a LIKE
 fallback) and Node A proxies it as `GET /context/search?q=<text>&limit=5`,
 merging local key-name matches so dirty keys are searchable before Node B has
-them.
+them. While Node B is unreachable, Node A also matches the query against its own
+full texts (resident and spilled blocks), so search degrades instead of failing.
+
+### Stubs
+
+Stubs are extractive and deterministic (`common/summarizer.py`): the first
+sentence, plus `key terms:` — the distinctive identifiers in the rest of the
+text (words with an underscore, letters mixed with digits, or ALL-CAPS codes),
+within a 25-token summary budget:
+
+```
+[STUB v1 | GET /context/obs_12?hydrate=true for full 200 tokens]: Observation 12: billing telemetry update. | key terms: obs_12, K7QX, total_cents
+```
+
+Identifiers are usually what an agent needs to decide whether to hydrate a
+block, and they are exactly what a first-sentence summary drops.
 
 ## Configuration
 
@@ -140,26 +177,60 @@ Node A reads these environment variables:
 | `INDEX_BUDGET_TOKENS` | `150` | tokens reserved inside the cap for `archive_index` |
 | `REPLICATION_TIMEOUT_S` | `2.0` | timeout for every Node A -> Node B call |
 | `RETRY_INTERVAL_S` | `3.0` | dirty-key retry period |
-| `NODE_A_STATE_FILE` | `node_a_state.json` | atomic JSON state checkpoint |
+| `NODE_A_STATE_FILE` | `node_a_state.json` | atomic JSON state checkpoint (also holds spilled full text) |
+| `SPILL_DIRTY` | `1` | spill dirty blocks out of the prompt during an outage; `0` keeps them resident (over budget) |
+| `PAGERKV_ADMIN_TOKEN` | unset | see [Admin endpoints](#admin-endpoints); both nodes |
 
-Node B reads `NODE_B_DB` (default `node_b_archive.db`). All settings are read at
-process startup.
+Node B reads `NODE_B_DB` (default `node_b_archive.db`) and `PAGERKV_ADMIN_TOKEN`.
+All settings are read at process startup.
+
+### Admin endpoints
+
+Fault injection (`/admin/fault` on Node B, `/admin/node_b/fault` on Node A)
+can take Node B offline, so it is guarded (`common/admin.py`):
+
+- With `PAGERKV_ADMIN_TOKEN` unset, only loopback clients (127.0.0.1, ::1) may
+  call it. A node bound to `0.0.0.0` cannot be switched off from the network.
+- With it set, every call needs an `X-Admin-Token` header with that value
+  (constant-time compare), from any address. Node A forwards the header to
+  Node B. The dashboard asks for the token the first time it gets a 403.
 
 ## Run it
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements-dev.txt     # runtime deps are in requirements.txt
 
-# Terminal 1 (or use the launcher, which starts both)
+# Start both nodes (Node B on 8002, Node A on 8001), then open http://127.0.0.1:8001/ui
 bash scripts/run_nodes.sh
 
 # Tests (they launch their own isolated subprocesses on 8001/8002)
 pytest -q
 
+# Lint and type check (what CI runs)
+ruff check .
+mypy
+
 # Benchmark and chart (self-contained; uses ports 18001/18002)
-python bench/run_benchmark.py
+python bench/run_benchmark.py           # add --check to fail on regressions
 python bench/plot.py
 ```
+
+With Docker instead:
+
+```bash
+docker compose up --build               # dashboard at http://127.0.0.1:8001/ui
+```
+
+The compose file runs each node in its own container with a named volume for its
+state, publishes ports on 127.0.0.1 only, and passes `MAX_WINDOW_TOKENS`,
+`SPILL_DIRTY` and `PAGERKV_ADMIN_TOKEN` through. Browser requests into a
+container are not loopback, so set `PAGERKV_ADMIN_TOKEN` if you want the
+dashboard's fault switch to work there.
+
+Dependencies are pinned. CI (`.github/workflows/ci.yml`) runs ruff, mypy, the
+test suite, the benchmark with `--check` (fails if the prompt ever exceeds the
+budget, any block is not recovered byte-for-byte, or recall outside the outage
+drops below 100%), and a Docker build.
 
 `run_nodes.sh` starts Node B on 8002 first and Node A on 8001, and kills both on
 Ctrl-C/TERM. `python` must be the interpreter with the requirements installed
@@ -168,24 +239,32 @@ Ctrl-C/TERM. `python` must be the interpreter with the requirements installed
 ## Dashboard
 
 With the nodes running, open **http://127.0.0.1:8001/ui** (`/` redirects there).
-It is one static file (`ui/index.html`, no build step) served by Node A. It polls
-`/health`, `/context/status` and `/context/prompt` every 1.5 s, so it needs no CORS.
+It is one static file (`ui/index.html`, no build step) served by Node A, so it
+needs no CORS. It polls `/health` and `/context/status?include_text=false` every
+1.5 s (the slim status leaves out every key's text) and `/context/prompt` every
+4.5 s. Reading a key in the dashboard uses `?peek=true`, which does not count as
+an access, so watching the system does not change its eviction order.
 
 - **Top bar:** Node A health, Node B fault mode (a dropdown to switch it between
-  online, slow and down), window tokens against the budget, and resident vs. paged key counts.
+  online, slow and down), window tokens against the budget, and resident /
+  spilled / paged key counts.
 - **Stat cards:** active window tokens, page faults, tokens saved by replication,
-  and dirty keys (eviction blocked).
-- **Isometric view:** the L1 floor shows keys resident on Node A and the L2 floor shows keys
-  paged to Node B. Block height scales with tokens. Dirty keys glow amber, pending keys
-  are violet, and the L2 floor turns red while Node B is down. Hover a block to see its
-  key status, or click it to inspect it.
-- **Window composition:** synced, dirty/pending, stub and archive-index tokens
-  as shares of the active window, plus a bar for budget usage.
-- **Panels:** a key table, inspect (view the L1 copy, hydrate it as a page fault, or delete it),
-  a form to PUT new context, archive search, and the rendered prompt.
-
-The Node B dropdown uses `GET/POST /admin/node_b/fault` on Node A, which proxies to
-Node B's `/admin/fault`. Node B now also answers `GET /admin/fault`.
+  and dirty keys (with how many are spilled).
+- **Isometric view:** the L1 floor shows keys on Node A (resident blocks, plus
+  spilled blocks drawn short, dashed and violet); the L2 floor shows keys paged to
+  Node B. Block height scales with tokens, the grid grows with the key count, dirty
+  keys glow amber, and the L2 floor turns red while Node B is down. Hover a block
+  for its status (including pin and priority), or click it to inspect it.
+- **Window composition:** synced, dirty/pending, spilled-stub, paged-stub and
+  archive-index tokens as shares of the window, plus a bar for budget usage.
+- **Timeline:** *Live* plots window tokens against the budget, with page-fault
+  markers and dirty/spilled counts. *Benchmark replay* loads `bench/results.csv`
+  (served at `/ui/bench.csv`) and animates the 100 turns: baseline vs. PagerKV,
+  the shaded outage, and spilled keys. Open `/ui#replay` to start on that tab.
+- **Panels:** a key table with policy column; inspect (view, hydrate, delete, pin
+  or unpin, set priority); a form to PUT new context; search; an **event log**
+  (PUTs, replications, failures, page-outs, spills, hydrations, deletes, Node B
+  mode changes); and the rendered prompt.
 
 ## API examples
 
@@ -212,28 +291,48 @@ curl -s -X POST http://127.0.0.1:8002/admin/fault \
 
 # Search the archive (FTS5, with a LIKE fallback)
 curl -s 'http://127.0.0.1:8002/search?q=deploy+token&limit=5'
+
+# Delete only if the archived version is <= 3 (safe to retry; never removes v4)
+curl -s -X DELETE 'http://127.0.0.1:8002/archive/db_schema?version=3'
+
+# Prometheus metrics: archived keys/tokens, fault mode
+curl -s http://127.0.0.1:8002/metrics
 ```
 
-With `mode=down`, `/replicate` and `/archive/{key}` return 503; `/health` and
-`/admin/fault` stay available. With `mode=slow`, data endpoints sleep
+With `mode=down`, `/replicate`, `/search` and `/archive/{key}` return 503;
+`/health`, `/metrics` and `/admin/fault` stay available. With `mode=slow`, data endpoints sleep
 `delay_s` seconds before running.
 
 ### Node A
 
 ```bash
-# Save or update a block (version increments on every PUT)
+# Save or update a block (version increments on every PUT).
+# Optional policy: "pinned": true keeps it resident; "priority" (-100..100):
+# lower is evicted first.
 curl -s -X PUT http://127.0.0.1:8001/context/db_schema \
   -H 'content-type: application/json' \
-  -d '{"text":"Postgres schema with users, orders, payments."}'
+  -d '{"text":"Postgres schema with users, orders, payments.", "pinned": true}'
 
-# Current view: full text if resident, stub if paged
+# Change policy later
+curl -s -X PATCH http://127.0.0.1:8001/context/db_schema \
+  -H 'content-type: application/json' -d '{"pinned": false, "priority": -10}'
+
+# Current view: full text if resident, stub if paged or spilled
+# (?peek=true reads without counting as an access for LRU)
 curl -s http://127.0.0.1:8001/context/db_schema
 
-# Page fault: fetch the exact full text from Node B
+# Page fault: exact full text from Node B, or from the local spill
 curl -s 'http://127.0.0.1:8001/context/db_schema?hydrate=true'
 
-# Whole-window status
-curl -s http://127.0.0.1:8001/context/status
+# Delete locally and on Node B (retried in the background if Node B is down)
+curl -s -X DELETE http://127.0.0.1:8001/context/db_schema
+
+# Whole-window status (include_text=false omits each key's text)
+curl -s 'http://127.0.0.1:8001/context/status?include_text=false'
+
+# Prometheus metrics: window tokens, budget, page faults, resident/paged/
+# spilled/dirty key counts, pending deletes
+curl -s http://127.0.0.1:8001/metrics
 
 # What the agent would put in its prompt, in created_at order
 curl -s http://127.0.0.1:8001/context/prompt
@@ -250,28 +349,43 @@ registered first, so those three exact names are reserved: `PUT` with one of the
 returns 422 instead of storing a key that could never be read back. Names that
 only start with them (`status-report`, `search/history`) are ordinary keys.
 
-Hydration failures are explicit:
+`DELETE` removes the key from Node A at once and records a tombstone (persisted)
+for the deleted version. Node A then calls Node B's versioned delete; if Node B is
+unreachable, the retry loop keeps trying until Node B confirms. A key re-created
+before that happens continues numbering after the deleted version, so the
+pending delete can never remove the new copy.
 
-- Node B unreachable/slow: `503` with `{"error": "...", "stub": "..."}`.
+Hydration answers with `source`: `L1` (already resident), `L1_SPILL` (restored
+from the local spill) or `L2_PAGE_FAULT` (fetched from Node B). Failures are
+explicit:
+
+- Paged key and Node B unreachable/slow: `503` with `{"error": "...", "stub": "..."}`.
 - Archive version differs from Node A's version: `409`, never wrong text.
 - Missing key: `404`.
 
 ## Tests
 
-`pytest -q` currently reports **19 passed**. The suite starts real Node B and
+`pytest -q` currently reports **37 passed**. The suite starts real Node B and
 Node A subprocesses on 8001/8002 with a temporary database and state file,
 resets fault injection before each test, uses unique keys, and runs entirely
-offline.
+offline. Some tests drive `NodeAState` directly with fake replicators to force
+exact orderings.
 
 Covered:
 
-- Node B: round-trip and sha256, stale-write rejection, short stubs, 503 down.
+- Node B: round-trip and sha256, stale-write rejection, short stubs, 503 down,
+  versioned delete.
 - Node A: under-budget residency, LRU paging, exact hydration, prompt budget,
-  literal `status` route, version bump, key-range compression, discoverability
-  of all 120 keys.
-- Faults: dirty keys never evicted, recovery after Node B returns, slow Node B
-  returns within the timeout, stale/out-of-order acks ignored, hydrate 503 with
-  stub while down, Node A restart preserves keys/versions/statuses.
+  literal `status` route, reserved names, keys with slashes, version bump,
+  key-range compression, discoverability of all 120 keys, peek reads.
+- Faults: dirty keys spill but are never paged and hydrate byte-for-byte while
+  Node B is down, spill disabled keeps the old over-budget rule, recovery after
+  Node B returns, slow Node B returns within the timeout, stale/out-of-order acks
+  ignored, stale-write reconciliation, delete tombstones retried, pin/priority
+  eviction, hydrate 503 with stub while down, Node A restart preserves state.
+- Ops: admin guard (loopback and token), `/metrics` on both nodes, slim status,
+  delete reaching Node B, identifier-keeping stubs, local search while Node B is
+  down, dashboard route and fault proxy.
 
 ## Benchmark
 
@@ -290,47 +404,58 @@ when the hydrated full text contains the stored code.
 Latest run:
 
 ```
-Baseline crashed at turn 5 | PagerKV ran 100 turns | max prompt tokens 5567 | lossless 100/100 | page faults 137
-recall 29/30 (outside-fault 28/28)
-Max prompt tokens outside the fault window: 1995
+Baseline crashed at turn 5 | PagerKV ran 100 turns | max prompt tokens 2000 | lossless 100/100 | page faults 132
+recall 30/30 (outside-fault 28/28)
+Max prompt tokens outside the fault window: 2000
+Benchmark check passed.
 ```
 
 - Baseline crash: turn 5 (requirement: before turn 15).
-- PagerKV completed all 100 turns.
-- Outside turns 40-50: maximum prompt 1995 tokens (cap 2000).
+- PagerKV completed all 100 turns, and the prompt never exceeded the 2000-token
+  cap, **including the outage** (previously 5567 there).
 - Lossless: 100/100 full texts recovered by hydration.
-- Recall: 29/30 overall; the single miss is turn 40, inside the outage window,
-  where `/context/search` correctly returns 503 because Node B is down. Outside
-  the fault window recall is 28/28 (100%).
-- The 5567-token maximum occurs inside the outage window, where 10 dirty blocks
-  cannot be paged out. This is intentional safety over budget, not a bug.
+- Recall: 30/30, including the check inside the outage window. Outside it,
+  28/28.
+- During turns 40-49 up to 10 dirty blocks are spilled to Node A's disk instead
+  of staying in the prompt; at turn 50 the retry loop syncs them and they become
+  ordinary paged blocks.
+- The page-fault count can vary by a few between runs: it depends on how quickly
+  the background retry loop syncs keys after the outage.
 
 ![PagerKV benchmark](bench/benchmark.png)
 
-The orange band is the Node B outage. The prompt spikes there because dirty
-keys must stay resident and full; after recovery the retry loop syncs them and
-compaction returns the prompt under 2000. The baseline line ends at its crash.
+The orange band is the Node B outage. The prompt stays at the cap through it
+because dirty blocks are spilled rather than kept resident. The baseline line
+ends at its crash. The dashboard's *Benchmark replay* tab animates the same data.
 
 `bench/results.csv` has the raw per-turn data:
-`turn,baseline_tokens,pagerkv_prompt_tokens,dirty_keys,paged_out_keys,tokens_saved`.
+`turn,baseline_tokens,pagerkv_prompt_tokens,dirty_keys,paged_out_keys,spilled_keys,tokens_saved,recall_ok`.
 
 ## Project layout
 
 ```
 pagerkv/
-  requirements.txt
+  requirements.txt     # pinned runtime deps
+  requirements-dev.txt # + pytest, matplotlib, ruff, mypy
+  pyproject.toml       # pytest / ruff / mypy config
+  Dockerfile
+  docker-compose.yml
+  .github/workflows/ci.yml
   README.md
   common/
     tokens.py          # the only token counter
     schemas.py         # shared pydantic models
+    summarizer.py      # deterministic stubs (first sentence + key terms)
+    admin.py           # admin-endpoint guard (loopback or token)
+    metrics.py         # Prometheus text rendering
   node_a/
     config.py          # env settings
-    state.py           # KeyEntry + NodeAState, invariants, compaction, hydration
+    state.py           # KeyEntry + NodeAState: invariants, compaction, spill, hydration, tombstones
     replicator.py      # shared httpx client + dirty-key retry loop
     app.py             # FastAPI routes for L1
   node_b/
-    archive.py         # SQLite archive, stale-write guard
-    summarizer.py      # deterministic extractive stubs
+    archive.py         # SQLite archive, stale-write guard, versioned delete
+    summarizer.py      # re-exports common.summarizer
     app.py             # FastAPI routes + fault injection for L2
   ui/
     index.html         # dashboard, served by Node A at /ui
@@ -346,6 +471,7 @@ pagerkv/
     test_node_b.py
     test_node_a.py
     test_fault_tolerance.py
+    test_ops.py
     test_ui.py
 ```
 
@@ -364,26 +490,29 @@ older text.
 
 - **Single Node B.** There is no replication of the archive itself; losing the
   Node B SQLite file loses the full texts.
-- **No authentication or TLS.** Both services bind to localhost by default and
-  are intended for a trusted machine.
-- **LRU only.** Eviction is least-recently-used; there is no frequency, size, or
-  pinning policy beyond the one-shot hydration pin. With many keys, the stub
-  metadata can consume the entire budget, so cold stubs are omitted from the
-  rendered prompt view as described above.
-- **Extractive stubs are lossy.** The stub is a whitespace-collapsed first
-  sentence (cut to 25 tokens), not a semantic summary. It is useful as a page
-  table, not as a substitute for the text. Hydration is what makes the system
-  lossless.
+- **No TLS, and only the admin endpoints are authenticated.** The data API is
+  open to anyone who can reach the port; both services bind to localhost by
+  default and are intended for a trusted machine or network.
+- **Spill durability is Node A's disk.** A spilled block's only full copy is in
+  Node A's state file until Node B acks it. Losing that file during an outage
+  loses those writes, exactly as it would without spilling.
+- **Simple eviction policy.** Priority, then least-recently-used, with pinning.
+  There is no frequency- or size-aware scoring. With many keys, the stub metadata
+  can consume the entire budget, so cold stubs are omitted from the rendered
+  prompt view as described above. Pinned keys can push the window over budget.
+- **Extractive stubs are lossy.** The stub is the first sentence plus key
+  identifiers, not a semantic summary. It is useful as a page table, not as a
+  substitute for the text. Hydration is what makes the system lossless.
 - **No LLM summarizer.** `STUB_LLM` is intentionally not wired to a network
   provider: tests and benchmarks must run offline with no API key.
 - **In-process state lock.** Node A assumes a single process (one uvicorn
   worker). Multiple workers would need shared state or sticky routing.
-- **Full-text JSON in status.** `/context/status` includes each key's
-  `prompt_view`, which is large for resident blocks. It is an observability
-  endpoint, not the hot path.
-- **Version counters live with Node A.** `DELETE` removes a key from Node A but
-  Node B keeps its archive. Re-putting a previously deleted key works when its
-  archived version is not higher than the new local version. If Node A's state
-  file is lost while Node B still holds a higher version, new PUTs for that key
-  are rejected as stale and stay dirty; the JSON state checkpoint is part of the
-  durability story.
+- **Full-text JSON in status by default.** `/context/status` includes each key's
+  `prompt_view` unless called with `include_text=false` (the dashboard and
+  `/metrics` use the slim form). It is an observability endpoint, not the hot path.
+- **Reconciliation is last-writer-wins.** If Node A loses its state file, its
+  next write to a key that Node B already holds supersedes Node B's copy
+  (versions jump past it). Pending deletes are tracked in the same file, so
+  losing it can leave deleted keys on Node B.
+- **Polling dashboard.** The UI polls; it does not stream updates. That is fine
+  for hundreds of keys, but a large deployment would want server-sent events.

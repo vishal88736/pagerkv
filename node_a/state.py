@@ -606,13 +606,15 @@ class NodeAState:
     # GET / hydrate
     # ------------------------------------------------------------------
 
-    async def get_view(self, key: str) -> dict[str, Any] | None:
+    async def get_view(self, key: str, touch: bool = True) -> dict[str, Any] | None:
+        """Current content of ``key``; ``touch=False`` leaves LRU order alone."""
         async with self._lock:
             entry = self.entries.get(key)
             if entry is None:
                 return None
-            entry.last_access = time.time()
-            self._persist()
+            if touch:
+                entry.last_access = time.time()
+                self._persist()
             return self._view(entry)
 
     async def hydrate(self, key: str, replicator: Replicator) -> dict[str, Any]:

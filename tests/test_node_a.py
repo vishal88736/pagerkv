@@ -245,3 +245,29 @@ def test_reserved_keys_are_rejected(a_client) -> None:
         assert a_client.put(f"/context/{key}", json={"text": "fine"}).status_code == 200
         assert a_client.get(f"/context/{key}").status_code == 200
         assert a_client.delete(f"/context/{key}").status_code == 204
+
+
+
+def test_peek_does_not_change_lru(tmp_path) -> None:
+    """GET with peek=true (used by the dashboard) must not reorder eviction."""
+    import asyncio
+
+    from node_a.replicator import ReplicationResult
+    from node_a.state import NodeAState
+
+    class Ok:
+        async def replicate(self, key, version, text):
+            return ReplicationResult(ok=True, version=version, stub="[STUB]", full_tokens=1)
+
+    async def scenario() -> None:
+        state = NodeAState(state_file=str(tmp_path / "s.json"))
+        await state.put("k", "text", Ok())
+        stamp = state.entries["k"].last_access
+        await asyncio.sleep(0.01)
+        view = await state.get_view("k", touch=False)
+        assert view is not None and view["content"] == "text"
+        assert state.entries["k"].last_access == stamp
+        await state.get_view("k")
+        assert state.entries["k"].last_access > stamp
+
+    asyncio.run(scenario())

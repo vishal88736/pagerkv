@@ -246,10 +246,13 @@ async def put_context(key: str, body: PutRequest, request: Request) -> dict:
 
 
 @app.get("/context/{key:path}")
-async def get_context(key: str, request: Request, hydrate: bool = False):
+async def get_context(
+    key: str, request: Request, hydrate: bool = False, peek: bool = False
+):
+    """``peek=true`` reads without counting as an access (dashboards, tools)."""
     state = _state(request)
     if not hydrate:
-        view = await state.get_view(key)
+        view = await state.get_view(key, touch=not peek)
         if view is None:
             raise HTTPException(status_code=404, detail=f"no such key {key!r}")
         return view

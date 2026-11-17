@@ -85,11 +85,14 @@ def main() -> None:
         fontweight="bold",
     )
 
+    peak = max([*pagerkv, *(v for v in baseline if v is not None), MAX_WINDOW_TOKENS])
+    ax.set_ylim(0, peak * 1.3)
+
     if crash_turn is not None:
         ax.annotate(
             f"Baseline crashes at turn {crash_turn}",
             xy=(crash_turn, MAX_WINDOW_TOKENS),
-            xytext=(crash_turn + 9, MAX_WINDOW_TOKENS + 950),
+            xytext=(crash_turn + 9, peak * 1.17),
             arrowprops={"arrowstyle": "->", "color": "#d62728"},
             color="#d62728",
             fontsize=10,
@@ -100,7 +103,7 @@ def main() -> None:
     ax.set_ylabel("Prompt tokens")
     ax.set_xlim(1, max(turns))
     ax.grid(True, alpha=0.25)
-    ax.legend(loc="upper left", framealpha=0.95)
+    ax.legend(loc="lower right", framealpha=0.95)
     fig.tight_layout()
     fig.savefig(OUTPUT_PNG, dpi=150)
     plt.close(fig)

@@ -12,7 +12,7 @@
   --line:rgba(140,190,220,.10); --line2:rgba(140,190,220,.18);
   --text:#e8eef2; --muted:#8a97a3; --dim:#56626d;
   --c1:#8fd6f5; --c2:#3f9cc8; --c3:#1f5f80; --c4:#143c52;
-  --ok:#3ddc97; --warn:#f2b45a; --bad:#ff6b6b;
+  --ok:#3ddc97; --warn:#f2b45a; --bad:#ff6b6b; --spill:#9f8cff;
   --sans:"Manrope",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
   --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
 }
@@ -110,11 +110,11 @@ button,input,select,textarea{font:inherit;color:inherit}
 .tip .r span:last-child{color:var(--text)}
 
 /* ---------- lower panels ---------- */
-.lower{display:grid; grid-template-columns:1.5fr 1fr; gap:24px; padding:0 28px 40px}
+.lower{display:grid; grid-template-columns:1.5fr 1fr; gap:24px; padding:0 28px 40px; align-items:start}
 .panel{background:var(--panel); border:1px solid var(--line); padding:22px 24px; min-width:0}
 .panel h3{margin:0 0 16px; font-size:15px; font-weight:500; display:flex; align-items:center; gap:10px}
 .panel h3 .sub{color:var(--dim); font-weight:400; font-size:13px; margin-left:auto}
-.tbl-wrap{overflow:auto; max-height:420px}
+.tbl-wrap{overflow:auto; max-height:min(760px, 80vh)}
 table{width:100%; border-collapse:collapse; font-size:13px}
 th{text-align:left; font-weight:500; color:var(--dim); font-size:11px; letter-spacing:1px; text-transform:uppercase; padding:8px 10px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--panel-solid)}
 td{padding:9px 10px; border-bottom:1px solid rgba(255,255,255,.035); font-variant-numeric:tabular-nums; white-space:nowrap}
@@ -127,7 +127,9 @@ td.key{font-family:var(--mono); color:var(--c1); max-width:220px; overflow:hidde
 .tag.pg{color:var(--muted); background:rgba(255,255,255,.04)}
 .tag.ok{color:var(--ok); background:rgba(61,220,151,.08)}
 .tag.dirty{color:var(--warn); background:rgba(242,180,90,.10)}
-.tag.pend{color:#b7a4ff; background:rgba(183,164,255,.08)}
+.tag.pend{color:#dfe7ec; background:rgba(223,231,236,.08)}
+.tag.spill{color:var(--spill); background:rgba(159,140,255,.10)}
+.tag.pin{color:var(--c1); border:1px solid rgba(143,214,245,.35); background:transparent}
 .lock{color:var(--warn)}
 .empty{color:var(--dim); font-size:13px; padding:24px 0; text-align:center}
 
@@ -155,6 +157,25 @@ pre.out{margin:0; background:rgba(0,0,0,.35); border:1px solid var(--line); padd
 .toast.show{transform:none}
 .banner{display:none; margin:16px 28px 0; padding:12px 16px; border:1px solid rgba(255,107,107,.35); background:rgba(255,107,107,.07); color:#ffb3b3; font-size:13px}
 
+.timeline{padding:0 28px 24px}
+.tabs{display:inline-flex; gap:4px; margin-left:14px}
+.tab{background:transparent; border:1px solid var(--line2); color:var(--muted); padding:4px 12px; font-size:12px; cursor:pointer; white-space:nowrap}
+.tab.on{color:var(--c1); border-color:rgba(63,156,200,.6); background:rgba(63,156,200,.12)}
+svg.chart{display:block; width:100%; height:220px}
+.chart-legend{display:flex; flex-wrap:wrap; gap:18px; font-size:12px; color:var(--muted); margin-top:10px}
+.chart-legend i{display:inline-block; width:14px; height:3px; vertical-align:middle; margin-right:6px}
+.axis{font-family:var(--mono); font-size:10px; fill:var(--dim)}
+.replay-ctl{display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px}
+.replay-ctl input[type=range]{flex:1; min-width:160px; accent-color:#3f9cc8}
+.replay-info{font-family:var(--mono); font-size:12px; color:var(--muted)}
+.log{display:flex; flex-direction:column; gap:2px; max-height:260px; overflow:auto; font-size:12px}
+.log div{display:grid; grid-template-columns:64px 1fr; gap:10px; padding:5px 6px; border-bottom:1px solid rgba(255,255,255,.03)}
+.log time{font-family:var(--mono); color:var(--dim)}
+.log .k{font-family:var(--mono); color:var(--c1)}
+.log .warn{color:var(--warn)} .log .bad{color:var(--bad)} .log .ok{color:var(--ok)} .log .spill{color:var(--spill)}
+.prio{display:flex; align-items:center; gap:6px; color:var(--muted); font-size:13px}
+.prio input{width:70px; background:rgba(0,0,0,.3); border:1px solid var(--line2); padding:8px; outline:none}
+
 @media (max-width:1100px){
   .stage{grid-template-columns:1fr}
   .viz{min-height:0}
@@ -168,6 +189,10 @@ pre.out{margin:0; background:rgba(0,0,0,.35); border:1px solid var(--line); padd
   .top{padding:12px 16px}
   .stage{padding:16px; gap:16px}
   .lower{padding:0 16px 24px}
+  .timeline{padding:0 16px 16px}
+  .timeline h3{flex-wrap:wrap}
+  .timeline h3 .sub{flex-basis:100%; margin-left:0}
+  .tabs{margin-left:auto}
   .viz svg#iso{height:520px}
   .comp{padding:20px}
   .seg .pct{font-size:24px}
@@ -244,12 +269,48 @@ pre.out{margin:0; background:rgba(0,0,0,.35); border:1px solid var(--line); padd
   </div>
 </section>
 
+<section class="timeline">
+  <div class="panel">
+    <h3>Timeline
+      <span class="tabs" role="tablist">
+        <button class="tab on" data-tab="live" role="tab">Live</button>
+        <button class="tab" data-tab="replay" role="tab">Benchmark replay</button>
+      </span>
+      <span class="sub" id="tlSub"></span>
+    </h3>
+    <div id="tlLive">
+      <svg id="liveChart" class="chart" role="img" aria-label="Window tokens over time"></svg>
+      <div class="chart-legend">
+        <span><i style="background:var(--c1)"></i>window tokens</span>
+        <span><i style="background:var(--bad);height:1px"></i>budget</span>
+        <span><i style="background:var(--warn);width:3px;height:10px"></i>page fault</span>
+        <span><i style="background:var(--spill);height:8px;opacity:.6"></i>dirty / spilled keys</span>
+      </div>
+    </div>
+    <div id="tlReplay" hidden>
+      <div class="replay-ctl">
+        <button class="btn" id="btnPlay">Play</button>
+        <input type="range" id="replaySlider" min="1" max="100" value="100" aria-label="Benchmark turn">
+        <span class="replay-info" id="replayInfo"></span>
+      </div>
+      <svg id="replayChart" class="chart" role="img" aria-label="Benchmark replay"></svg>
+      <div class="chart-legend">
+        <span><i style="background:#ff8a8a"></i>baseline agent (no pager)</span>
+        <span><i style="background:var(--c1)"></i>PagerKV prompt</span>
+        <span><i style="background:var(--bad);height:1px"></i>budget</span>
+        <span><i style="background:rgba(255,107,107,.25);height:10px"></i>Node B down</span>
+        <span><i style="background:var(--spill);height:8px;opacity:.6"></i>spilled keys</span>
+      </div>
+    </div>
+  </div>
+</section>
+
 <section class="lower">
   <div class="panel">
     <h3>Context Keys <span class="sub" id="keyCount"></span></h3>
     <div class="tbl-wrap">
       <table>
-        <thead><tr><th>Key</th><th>Ver</th><th>Residence</th><th>Consistency</th><th>L1 tok</th><th>Full tok</th><th></th></tr></thead>
+        <thead><tr><th>Key</th><th>Ver</th><th>Residence</th><th>Consistency</th><th>L1 tok</th><th>Full tok</th><th>Policy</th><th></th></tr></thead>
         <tbody id="rows"></tbody>
       </table>
       <div class="empty" id="emptyRows">No keys yet. Write one with the form on the right.</div>
@@ -265,6 +326,11 @@ pre.out{margin:0; background:rgba(0,0,0,.35); border:1px solid var(--line); padd
         <button class="btn ghost" id="btnView" disabled>View L1</button>
         <button class="btn danger" id="btnDelete" disabled>Delete</button>
       </div>
+      <div class="field">
+        <button class="btn ghost" id="btnPin" disabled>Pin</button>
+        <label class="prio">priority <input type="number" id="prio" min="-100" max="100" value="0" disabled></label>
+        <button class="btn ghost" id="btnPrio" disabled>Set priority</button>
+      </div>
       <pre class="out" id="detailOut">—</pre>
     </div>
 
@@ -279,6 +345,11 @@ pre.out{margin:0; background:rgba(0,0,0,.35); border:1px solid var(--line); padd
       <h3>Search Archive</h3>
       <div class="field"><input id="q" placeholder="search L1 keys + L2 full text" autocomplete="off"><button class="btn" id="btnSearch">Search</button></div>
       <div class="res-list" id="results"></div>
+    </div>
+
+    <div class="panel">
+      <h3>Event Log <span class="sub" id="logCount"></span></h3>
+      <div class="log" id="log"><div><time></time><span style="color:var(--dim)">waiting for changes…</span></div></div>
     </div>
 
     <div class="panel">
@@ -299,7 +370,11 @@ pre.out{margin:0; background:rgba(0,0,0,.35); border:1px solid var(--line); padd
   const enc = k => encodeURIComponent(k);
   const POLL_MS = 1500;
 
-  let status = null, selected = null, faultMode = "none", busy = false;
+  let status = null, selected = null, faultMode = "none", busy = false, faultLocked = false;
+  let adminToken = "";
+  try { adminToken = localStorage.getItem("pagerkv.adminToken") || ""; } catch { /* storage unavailable */ }
+  const hist = [];          // live samples for the timeline
+  const events = [];        // event log, newest first
 
   function toast(msg, bad) {
     const t = $("toast"); t.textContent = msg; t.style.borderColor = bad ? "rgba(255,107,107,.5)" : "";
@@ -307,7 +382,9 @@ pre.out{margin:0; background:rgba(0,0,0,.35); border:1px solid var(--line); padd
   }
 
   async function api(path, opts = {}) {
-    const r = await fetch(path, { headers: { "content-type": "application/json" }, ...opts });
+    const headers = { "content-type": "application/json" };
+    if (adminToken && path.startsWith("/admin/")) headers["X-Admin-Token"] = adminToken;
+    const r = await fetch(path, { headers, ...opts });
     let body = null;
     try { body = await r.json(); } catch { /* 204 or non-json */ }
     return { ok: r.ok, status: r.status, body };
@@ -319,17 +396,28 @@ pre.out{margin:0; background:rgba(0,0,0,.35); border:1px solid var(--line); padd
     busy = true;
     try {
       const [h, s, f] = await Promise.all([
-        api("/health"), api("/context/status"), api("/admin/node_b/fault")
+        api("/health"), api("/context/status?include_text=false"), api("/admin/node_b/fault")
       ]);
       $("dotLive").className = "dot ok"; $("liveTxt").textContent = "live · " + new Date().toLocaleTimeString();
       $("banner").style.display = "none";
       const bUp = !!(h.body && h.body.node_b_reachable);
       $("dotA").className = "dot ok"; $("pillA").textContent = "Online";
+      faultLocked = f.status === 403;
+      const prevMode = faultMode;
       if (f.ok && f.body) faultMode = f.body.mode;
-      if (document.activeElement !== $("faultSel")) $("faultSel").value = f.ok ? faultMode : "down";
-      const bState = !f.ok ? "bad" : faultMode === "down" ? "bad" : faultMode === "slow" ? "warn" : bUp ? "ok" : "bad";
+      else if (!faultLocked) faultMode = "down";
+      else faultMode = bUp ? "none" : "down";
+      if (prevMode !== faultMode && status) logEvent(faultMode === "none" ? "ok" : "bad", `Node B → ${faultMode}`);
+      $("faultSel").title = faultLocked ? "Locked: needs an admin token (click to enter one)" : "";
+      if (document.activeElement !== $("faultSel")) $("faultSel").value = faultMode;
+      const bState = faultMode === "down" ? "bad" : faultMode === "slow" ? "warn" : bUp ? "ok" : "bad";
       $("dotB").className = "dot " + bState;
-      if (s.ok) { status = s.body; render(); }
+      if (s.ok) {
+        if (status) diffEvents(status, s.body);
+        status = s.body;
+        sample(status);
+        render();
+      }
     } catch (e) {
       $("dotLive").className = "dot bad"; $("liveTxt").textContent = "disconnected";
       $("dotA").className = "dot bad"; $("pillA").textContent = "Offline";
@@ -348,19 +436,21 @@ pre.out{margin:0; background:rgba(0,0,0,.35); border:1px solid var(--line); padd
   // ------------------------------------------------------------ render
   function classify(k) {
     const resident = k.residence === "RESIDENT_FULL";
+    const spilled = k.residence === "SPILLED_LOCAL";
     const dirty = k.consistency_status === "DIRTY_UNREPLICATED";
     const pending = k.consistency_status === "PENDING_REPLICATION";
-    return { resident, dirty, pending };
+    return { resident, spilled, dirty, pending };
   }
 
   function render() {
     const s = status, keys = Object.entries(s.keys || {});
     const resident = keys.filter(([, k]) => classify(k).resident);
-    const paged = keys.filter(([, k]) => !classify(k).resident);
+    const spilled = keys.filter(([, k]) => classify(k).spilled);
+    const paged = keys.filter(([, k]) => k.residence === "PAGED_TO_NODE_B");
     const dirty = keys.filter(([, k]) => classify(k).dirty);
 
     $("pillWin").textContent = `${fmt(s.active_window_tokens)} / ${fmt(s.max_window_tokens)}`;
-    $("pillKeys").textContent = `${resident.length} in L1 / ${paged.length} paged`;
+    $("pillKeys").textContent = `${resident.length} in L1` + (spilled.length ? ` · ${spilled.length} spilled` : "") + ` · ${paged.length} paged`;
 
     $("sWin").innerHTML = `${fmt(s.active_window_tokens)}<small>tok</small>`;
     const pct = s.max_window_tokens ? (s.active_window_tokens / s.max_window_tokens * 100) : 0;
@@ -372,23 +462,29 @@ pre.out{margin:0; background:rgba(0,0,0,.35); border:1px solid var(--line); padd
     $("sDirty").textContent = fmt(dirty.length);
     const dc = $("sDirtyChip");
     dc.className = "chip " + (dirty.length ? "warn" : "mut");
-    dc.textContent = dirty.length ? "eviction blocked" : "all replicated";
+    dc.textContent = !dirty.length ? "all replicated"
+      : spilled.length ? `${spilled.length} spilled to local disk` : "awaiting Node B";
 
     renderComposition(s, keys);
-    renderIso(resident, paged);
+    renderIso([...resident, ...spilled], paged);
+    renderLive();
     renderTable(keys);
     renderDetailMeta();
   }
 
   function renderComposition(s, keys) {
-    let synced = 0, dirtyTok = 0, stubs = 0;
+    let synced = 0, dirtyTok = 0, stubs = 0, spillTok = 0;
     for (const [, k] of keys) {
       const c = classify(k), t = k.active_tokens_in_node_a || 0;
-      if (!c.resident) stubs += t; else if (c.dirty || c.pending) dirtyTok += t; else synced += t;
+      if (c.spilled) spillTok += t;
+      else if (!c.resident) stubs += t;
+      else if (c.dirty || c.pending) dirtyTok += t;
+      else synced += t;
     }
     const parts = [
       { name: "Resident · synced", v: synced, color: "var(--c1)" },
       { name: "Resident · dirty / pending", v: dirtyTok, color: "var(--warn)" },
+      { name: "Spilled stubs (local disk)", v: spillTok, color: "var(--spill)" },
       { name: "Paged-out stubs", v: stubs, color: "var(--c2)" },
       { name: "Archive index", v: s.index_tokens || 0, color: "var(--c3)" },
     ];
@@ -427,7 +523,8 @@ pre.out{margin:0; background:rgba(0,0,0,.35); border:1px solid var(--line); padd
       <filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
     </defs>`;
 
-    const N = 8;                                   // grid cells per side
+    const most = Math.max(resident.length, paged.length);
+    const N = Math.min(12, Math.max(6, Math.ceil(Math.sqrt(most))));   // grid cells per side
     const overlay = getComputedStyle($("comp")).position === "absolute";
     const compW = overlay ? $("comp").offsetWidth : 0;
     // Fit two stacked floors: each diamond is N*cell tall, plus wall height, gap and labels.
@@ -442,7 +539,7 @@ pre.out{margin:0; background:rgba(0,0,0,.35); border:1px solid var(--line); padd
 
     const bDown = faultMode === "down" || $("dotB").classList.contains("bad");
     const floors = [
-      { name: "L1 · NODE A · ACTIVE WINDOW", items: resident, oy: top0, bad: false, l1: true },
+      { name: "L1 · NODE A · WINDOW + SPILL", items: resident, oy: top0, bad: false, l1: true },
       { name: "L2 · NODE B · ARCHIVE" + (bDown ? " · OFFLINE" : ""), items: paged, oy: top0 + N * cell + gap + wallH * 0.6, bad: bDown, l1: false },
     ];
     const maxTok = Math.max(1, ...[...resident, ...paged].map(([, k]) => k.full_tokens_on_node_b || k.active_tokens_in_node_a || 1));
@@ -491,14 +588,16 @@ pre.out{margin:0; background:rgba(0,0,0,.35); border:1px solid var(--line); padd
       items.forEach(([key, k], i) => {
         const gx = i % N, gy = Math.floor(i / N);
         const c = classify(k);
-        const tok = f.l1 ? (k.active_tokens_in_node_a || 1) : (k.full_tokens_on_node_b || k.active_tokens_in_node_a || 1);
-        const h = cell * (0.35 + 2.4 * Math.sqrt(tok / maxTok));
+        const tok = f.l1 && !c.spilled ? (k.active_tokens_in_node_a || 1) : (k.full_tokens_on_node_b || k.active_tokens_in_node_a || 1);
+        const h = cell * (0.35 + 2.4 * Math.sqrt(tok / maxTok)) * (c.spilled ? 0.45 : 1);
         const pad = 0.14, x0 = gx + pad, x1 = gx + 1 - pad, y0 = gy + pad, y1 = gy + 1 - pad;
-        const base = f.bad ? [255,107,107] : c.dirty ? [242,180,90] : c.pending ? [183,164,255] : f.l1 ? [143,214,245] : [63,156,200];
-        const rgb = (m, al) => `rgba(${base.map(v => Math.round(v * m)).join(",")},${al})`;
+        const base = f.bad ? [255,107,107] : c.spilled ? [159,140,255] : c.dirty ? [242,180,90] : c.pending ? [223,231,236] : f.l1 ? [143,214,245] : [63,156,200];
+        const fade = c.spilled ? 0.55 : 1;
+        const rgb = (m, al) => `rgba(${base.map(v => Math.round(v * m)).join(",")},${al * fade})`;
         const blk = document.createElementNS(NS, "g");
         blk.setAttribute("class", "blk" + (key === selected ? " sel" : ""));
-        if (c.dirty) blk.setAttribute("filter", "url(#glow)");
+        if (c.dirty && !c.spilled) blk.setAttribute("filter", "url(#glow)");
+        if (c.spilled) blk.setAttribute("stroke-dasharray", "3 2");
         blk.appendChild(poly([P(x0,y1,0), P(x1,y1,0), P(x1,y1,h), P(x0,y1,h)], { fill: rgb(.55, .55), stroke: rgb(1, .5), "stroke-width": ".6" }));
         blk.appendChild(poly([P(x1,y0,0), P(x1,y1,0), P(x1,y1,h), P(x1,y0,h)], { fill: rgb(.38, .55), stroke: rgb(1, .5), "stroke-width": ".6" }));
         blk.appendChild(poly([P(x0,y0,h), P(x1,y0,h), P(x1,y1,h), P(x0,y1,h)], { fill: rgb(1, .75), stroke: rgb(1, .9), "stroke-width": ".6" }));
@@ -524,7 +623,8 @@ pre.out{margin:0; background:rgba(0,0,0,.35); border:1px solid var(--line); padd
       <div class="r"><span>consistency</span><span>${esc(k.consistency_status)}</span></div>
       <div class="r"><span>L1 tokens</span><span>${fmt(k.active_tokens_in_node_a)}</span></div>
       <div class="r"><span>full tokens</span><span>${fmt(k.full_tokens_on_node_b)}</span></div>
-      <div class="r"><span>evictable</span><span>${k.eviction_allowed ? "yes" : "no"}</span></div>`;
+      <div class="r"><span>evictable</span><span>${k.eviction_allowed ? "yes" : "no"}</span></div>
+      <div class="r"><span>policy</span><span>${k.pinned ? "pinned" : "—"} · p${k.priority ?? 0}</span></div>`;
     t.style.display = "block";
     const x = Math.min(e.clientX + 14, innerWidth - t.offsetWidth - 8), y = Math.min(e.clientY + 14, innerHeight - t.offsetHeight - 8);
     t.style.left = x + "px"; t.style.top = y + "px";
@@ -532,7 +632,11 @@ pre.out{margin:0; background:rgba(0,0,0,.35); border:1px solid var(--line); padd
   function hideTip() { $("tip").style.display = "none"; }
 
   // ------------------------------------------------------------ table + detail
-  function tagRes(r) { return r === "RESIDENT_FULL" ? `<span class="tag res">resident</span>` : `<span class="tag pg">paged</span>`; }
+  function tagRes(r) {
+    if (r === "RESIDENT_FULL") return `<span class="tag res">resident</span>`;
+    if (r === "SPILLED_LOCAL") return `<span class="tag spill">spilled</span>`;
+    return `<span class="tag pg">paged</span>`;
+  }
   function tagCon(c) {
     if (c === "SYNCED_ARCHIVED") return `<span class="tag ok">synced</span>`;
     if (c === "DIRTY_UNREPLICATED") return `<span class="tag dirty">dirty</span>`;
@@ -550,6 +654,7 @@ pre.out{margin:0; background:rgba(0,0,0,.35); border:1px solid var(--line); padd
         <td>${tagCon(k.consistency_status)}</td>
         <td>${fmt(k.active_tokens_in_node_a)}</td>
         <td>${fmt(k.full_tokens_on_node_b)}</td>
+        <td>${k.pinned ? `<span class="tag pin">pinned</span> ` : ""}${k.priority ? `<span class="mono" style="color:var(--muted)">p${k.priority}</span>` : ""}</td>
         <td>${k.eviction_allowed || k.residence !== "RESIDENT_FULL" ? "" : `<span class="lock" title="${esc(k.replication_error || "not evictable until acked")}">●</span>`}</td>
       </tr>`).join("");
   }
@@ -557,7 +662,11 @@ pre.out{margin:0; background:rgba(0,0,0,.35); border:1px solid var(--line); padd
 
   function renderDetailMeta() {
     const k = selected && status && status.keys[selected];
-    for (const b of ["btnHydrate", "btnView", "btnDelete"]) $(b).disabled = !k;
+    for (const b of ["btnHydrate", "btnView", "btnDelete", "btnPin", "prio", "btnPrio"]) $(b).disabled = !k;
+    if (k) {
+      $("btnPin").textContent = k.pinned ? "Unpin" : "Pin";
+      if (document.activeElement !== $("prio")) $("prio").value = k.priority ?? 0;
+    }
     if (!k) { $("detailMeta").innerHTML = ""; $("selKey").textContent = selected ? "deleted" : "select a key"; return; }
     $("selKey").textContent = selected;
     $("detailMeta").innerHTML = `
@@ -565,25 +674,43 @@ pre.out{margin:0; background:rgba(0,0,0,.35); border:1px solid var(--line); padd
       <span>residence</span><b>${esc(k.residence)}</b>
       <span>consistency</span><b>${esc(k.consistency_status)}</b>
       <span>evictable</span><b>${k.eviction_allowed ? "yes" : "no"}</b>
+      <span>policy</span><b>${k.pinned ? "pinned" : "not pinned"} · priority ${k.priority ?? 0}</b>
       ${k.replication_error ? `<span>last error</span><b style="color:var(--bad)">${esc(k.replication_error)}</b>` : ""}`;
+  }
+
+  async function peek(key) {
+    // peek=true: reading in the dashboard must not change LRU eviction order.
+    const r = await api(`/context/${enc(key)}?peek=true`);
+    if (key !== selected) return;
+    $("detailOut").textContent = r.ok ? r.body.content : `HTTP ${r.status}\n` + JSON.stringify(r.body, null, 2);
   }
 
   function select(key) {
     selected = key;
     if (status) render();
-    const k = status && status.keys[key];
-    $("detailOut").textContent = k ? (k.prompt_view || "—") : "—";
+    $("detailOut").textContent = "loading…";
+    peek(key);
   }
 
-  $("btnView").onclick = async () => {
-    const r = await api(`/context/${enc(selected)}`);
-    $("detailOut").textContent = r.ok ? r.body.content : `HTTP ${r.status}\n` + JSON.stringify(r.body, null, 2);
+  $("btnView").onclick = () => peek(selected);
+
+  async function patchPolicy(body) {
+    const r = await api(`/context/${enc(selected)}`, { method: "PATCH", body: JSON.stringify(body) });
+    toast(r.ok ? `${selected}: ${body.pinned != null ? (body.pinned ? "pinned" : "unpinned") : "priority " + body.priority}` : `Update failed (${r.status})`, !r.ok);
+    poll(); loadPrompt();
+  }
+  $("btnPin").onclick = () => { const k = status && status.keys[selected]; if (k) patchPolicy({ pinned: !k.pinned }); };
+  $("btnPrio").onclick = () => {
+    const v = Math.max(-100, Math.min(100, parseInt($("prio").value, 10) || 0));
+    patchPolicy({ priority: v });
   };
   $("btnHydrate").onclick = async () => {
     const r = await api(`/context/${enc(selected)}?hydrate=true`);
     if (r.ok) {
       $("detailOut").textContent = r.body.full_text;
-      toast(r.body.source === "L2_PAGE_FAULT" ? `Page fault: ${selected} hydrated from Node B` : `${selected} served from L1`);
+      toast(r.body.source === "L2_PAGE_FAULT" ? `Page fault: ${selected} hydrated from Node B`
+        : r.body.source === "L1_SPILL" ? `Page fault: ${selected} restored from Node A's local spill`
+        : `${selected} served from L1`);
     } else {
       $("detailOut").textContent = `HTTP ${r.status}\n` + JSON.stringify(r.body, null, 2);
       toast(r.status === 503 ? "Node B unavailable: returned stub" : `Hydrate failed (${r.status})`, true);
@@ -622,14 +749,187 @@ pre.out{margin:0; background:rgba(0,0,0,.35); border:1px solid var(--line); padd
   $("q").addEventListener("keydown", e => { if (e.key === "Enter") search(); });
   $("results").addEventListener("click", e => { const d = e.target.closest("[data-key]"); if (d) select(d.dataset.key); });
 
+  async function setFault(mode) {
+    return api("/admin/node_b/fault", { method: "POST", body: JSON.stringify({ mode, delay_s: mode === "slow" ? 3 : 0 }) });
+  }
   $("faultSel").addEventListener("change", async e => {
     const mode = e.target.value;
-    const r = await api("/admin/node_b/fault", { method: "POST", body: JSON.stringify({ mode, delay_s: mode === "slow" ? 3 : 0 }) });
-    toast(r.ok ? `Node B fault mode → ${mode}` : `Could not reach Node B (${r.status})`, !r.ok || mode !== "none");
+    let r = await setFault(mode);
+    if (r.status === 403) {
+      const t = prompt("The fault switch needs an admin token (PAGERKV_ADMIN_TOKEN on the nodes):", "");
+      if (t) {
+        adminToken = t.trim();
+        try { localStorage.setItem("pagerkv.adminToken", adminToken); } catch { /* not persisted */ }
+        r = await setFault(mode);
+      }
+    }
+    toast(r.ok ? `Node B fault mode → ${mode}` : r.status === 403 ? "Forbidden: admin token required" : `Could not reach Node B (${r.status})`, !r.ok || mode !== "none");
     poll();
   });
 
-  addEventListener("resize", () => { if (status) render(); });
+  // ------------------------------------------------------------ event log
+  function logEvent(kind, html) {
+    events.unshift({ t: new Date(), kind, html });
+    if (events.length > 120) events.pop();
+    $("logCount").textContent = `${events.length} events`;
+    $("log").innerHTML = events.map(e =>
+      `<div><time>${e.t.toLocaleTimeString([], { hour12: false })}</time><span class="${e.kind}">${e.html}</span></div>`).join("");
+  }
+
+  function diffEvents(prev, next) {
+    const K = k => `<span class="k">${esc(k)}</span>`;
+    for (const [key, n] of Object.entries(next.keys)) {
+      const o = prev.keys[key];
+      if (!o) { logEvent(n.consistency_status === "DIRTY_UNREPLICATED" ? "warn" : "", `PUT ${K(key)} v${n.version}`); continue; }
+      if (n.version !== o.version) logEvent("", `${K(key)} updated to v${n.version}`);
+      if (n.residence !== o.residence) {
+        if (n.residence === "PAGED_TO_NODE_B") logEvent("", `${K(key)} paged out to Node B`);
+        else if (n.residence === "SPILLED_LOCAL") logEvent("spill", `${K(key)} spilled to local disk (Node B unreachable)`);
+        else if (o.residence === "SPILLED_LOCAL") logEvent("spill", `${K(key)} restored from local spill`);
+        else logEvent("warn", `${K(key)} hydrated from Node B (page fault)`);
+      }
+      if (n.consistency_status !== o.consistency_status) {
+        if (n.consistency_status === "DIRTY_UNREPLICATED") logEvent("warn", `${K(key)} dirty: ${esc(n.replication_error || "replication failed")}`);
+        else if (n.consistency_status === "SYNCED_ARCHIVED") logEvent("ok", `${K(key)} v${n.version} replicated`);
+      }
+      if (n.pinned !== o.pinned) logEvent("", `${K(key)} ${n.pinned ? "pinned" : "unpinned"}`);
+      if (n.priority !== o.priority) logEvent("", `${K(key)} priority ${n.priority}`);
+    }
+    for (const key of Object.keys(prev.keys)) if (!next.keys[key]) logEvent("bad", `${K(key)} deleted`);
+    if (next.over_budget !== prev.over_budget) logEvent(next.over_budget ? "bad" : "ok", next.over_budget ? "window over budget" : "window back within budget");
+    if ((next.pending_deletes || 0) < (prev.pending_deletes || 0)) logEvent("ok", "pending delete applied on Node B");
+  }
+
+  // ------------------------------------------------------------ charts
+  function sample(s) {
+    let dirty = 0, spilled = 0;
+    for (const k of Object.values(s.keys)) {
+      if (k.consistency_status === "DIRTY_UNREPLICATED") dirty++;
+      if (k.residence === "SPILLED_LOCAL") spilled++;
+    }
+    hist.push({ t: Date.now(), tokens: s.active_window_tokens, budget: s.max_window_tokens, faults: s.page_faults, dirty, spilled });
+    if (hist.length > 240) hist.shift();
+  }
+
+  // Generic line chart. series: [{ys, color, width, dash, area}], bars: {ys, color, max}
+  function drawChart(svg, { n, yMax, series, bars, shade, marks, cursor, xLabel }) {
+    const box = svg.getBoundingClientRect(), W = box.width, H = box.height;
+    if (!W || !n) { svg.innerHTML = ""; return; }
+    const L = 44, R = 10, T = 10, B = 22, iw = W - L - R, ih = H - T - B;
+    const X = i => L + (n === 1 ? iw : (i / (n - 1)) * iw), Y = v => T + ih - (v / yMax) * ih;
+    let out = "";
+    for (let g = 0; g <= 4; g++) {
+      const v = yMax * g / 4, y = Y(v);
+      out += `<line x1="${L}" x2="${W - R}" y1="${y}" y2="${y}" stroke="rgba(255,255,255,.05)"/><text class="axis" x="${L - 6}" y="${y + 3}" text-anchor="end">${Math.round(v).toLocaleString()}</text>`;
+    }
+    if (shade) out += `<rect x="${X(shade[0])}" y="${T}" width="${Math.max(2, X(shade[1]) - X(shade[0]))}" height="${ih}" fill="rgba(255,107,107,.12)"/>`;
+    if (bars) {
+      const bw = Math.min(6, Math.max(1, iw / n * 0.6));
+      bars.ys.forEach((v, i) => { if (v) { const h = (v / bars.max) * ih * 0.3; out += `<rect x="${X(i) - bw / 2}" y="${T + ih - h}" width="${bw}" height="${h}" fill="${bars.color}" opacity=".55"/>`; } });
+    }
+    for (const sr of series) {
+      const pts = sr.ys.map((v, i) => v == null ? null : [X(i), Y(Math.min(v, yMax))]).filter(Boolean);
+      if (!pts.length) continue;
+      const d = pts.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + "," + p[1].toFixed(1)).join("");
+      if (sr.area) out += `<path d="${d}L${pts[pts.length - 1][0]},${T + ih}L${pts[0][0]},${T + ih}Z" fill="${sr.color}" opacity=".10"/>`;
+      out += `<path d="${d}" fill="none" stroke="${sr.color}" stroke-width="${sr.width || 1.8}" ${sr.dash ? `stroke-dasharray="${sr.dash}"` : ""}/>`;
+    }
+    for (const i of marks || []) out += `<line x1="${X(i)}" x2="${X(i)}" y1="${T}" y2="${T + ih}" stroke="var(--warn)" stroke-opacity=".7" stroke-width="1.5"/>`;
+    if (cursor != null) out += `<line x1="${X(cursor)}" x2="${X(cursor)}" y1="${T}" y2="${T + ih}" stroke="#e8eef2" stroke-opacity=".6" stroke-dasharray="3 3"/>`;
+    out += `<text class="axis" x="${L}" y="${H - 6}">${esc(xLabel[0])}</text><text class="axis" x="${W - R}" y="${H - 6}" text-anchor="end">${esc(xLabel[1])}</text>`;
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    svg.innerHTML = out;
+  }
+
+  function renderLive() {
+    if ($("tlLive").hidden || !hist.length) return;
+    const n = hist.length, budget = hist[n - 1].budget;
+    const yMax = Math.max(budget * 1.15, ...hist.map(h => h.tokens)) || 1;
+    const marks = [];
+    for (let i = 1; i < n; i++) if (hist[i].faults > hist[i - 1].faults) marks.push(i);
+    drawChart($("liveChart"), {
+      n, yMax,
+      series: [
+        { ys: hist.map(h => h.tokens), color: "var(--c1)", area: true },
+        { ys: hist.map(h => h.budget), color: "var(--bad)", width: 1, dash: "5 4" },
+      ],
+      bars: { ys: hist.map(h => h.dirty + h.spilled), color: "var(--spill)", max: Math.max(4, ...hist.map(h => h.dirty + h.spilled)) },
+      marks,
+      xLabel: [`${Math.round((Date.now() - hist[0].t) / 1000)}s ago`, "now"],
+    });
+    $("tlSub").textContent = `last ${n} samples · every ${POLL_MS / 1000}s`;
+  }
+
+  // ------------------------------------------------------------ benchmark replay
+  let replay = null, playTimer = null;
+  async function loadReplay() {
+    if (replay) return true;
+    const r = await fetch("/ui/bench.csv");
+    if (!r.ok) { $("replayInfo").textContent = "No bench/results.csv yet: run python bench/run_benchmark.py"; return false; }
+    const lines = (await r.text()).trim().split(/\r?\n/), head = lines.shift().split(",");
+    const rows = lines.map(l => Object.fromEntries(l.split(",").map((v, i) => [head[i], v])));
+    const num = v => (v === "" || v == null ? null : Number(v));
+    replay = {
+      turns: rows.map(r => num(r.turn)),
+      baseline: rows.map(r => num(r.baseline_tokens)),
+      pagerkv: rows.map(r => num(r.pagerkv_prompt_tokens)),
+      dirty: rows.map(r => num(r.dirty_keys) || 0),
+      spilled: rows.map(r => num(r.spilled_keys) || 0),
+      paged: rows.map(r => num(r.paged_out_keys) || 0),
+      recall: rows.map(r => r.recall_ok),
+    };
+    const fault = replay.dirty.map((d, i) => d > 0 ? i : -1).filter(i => i >= 0);
+    replay.shade = fault.length ? [fault[0], fault[fault.length - 1] + 1] : null;
+    $("replaySlider").max = replay.turns.length;
+    $("replaySlider").value = replay.turns.length;
+    return true;
+  }
+
+  function renderReplay() {
+    if (!replay) return;
+    const upto = Number($("replaySlider").value), n = replay.turns.length, i = upto - 1;
+    const cut = arr => arr.map((v, j) => (j < upto ? v : null));
+    const budget = status ? status.max_window_tokens : 2000;
+    const yMax = Math.max(budget * 1.6, ...replay.pagerkv.filter(v => v != null));
+    drawChart($("replayChart"), {
+      n, yMax,
+      series: [
+        { ys: cut(replay.baseline), color: "#ff8a8a", width: 2.2 },
+        { ys: cut(replay.pagerkv), color: "var(--c1)", area: true },
+        { ys: replay.turns.map(() => budget), color: "var(--bad)", width: 1, dash: "5 4" },
+      ],
+      bars: { ys: cut(replay.spilled), color: "var(--spill)", max: Math.max(4, ...replay.spilled) },
+      shade: replay.shade, cursor: i,
+      xLabel: ["turn 1", `turn ${n}`],
+    });
+    const crash = replay.baseline.findIndex(v => v == null);
+    $("replayInfo").textContent =
+      `turn ${replay.turns[i]} · prompt ${fmt(replay.pagerkv[i])} tok · paged ${replay.paged[i]} · dirty ${replay.dirty[i]} · spilled ${replay.spilled[i]}` +
+      (crash >= 0 && i >= crash ? ` · baseline crashed at turn ${replay.turns[crash]}` : "") +
+      (replay.recall[i] === "1" ? " · recall ✓" : replay.recall[i] === "0" ? " · recall ✗" : "");
+    $("tlSub").textContent = "bench/results.csv · 100 deterministic turns";
+  }
+
+  $("replaySlider").addEventListener("input", renderReplay);
+  $("btnPlay").onclick = () => {
+    if (playTimer) { clearInterval(playTimer); playTimer = null; $("btnPlay").textContent = "Play"; return; }
+    const sl = $("replaySlider");
+    if (Number(sl.value) >= Number(sl.max)) sl.value = 1;
+    $("btnPlay").textContent = "Pause";
+    playTimer = setInterval(() => {
+      sl.value = Number(sl.value) + 1; renderReplay();
+      if (Number(sl.value) >= Number(sl.max)) { clearInterval(playTimer); playTimer = null; $("btnPlay").textContent = "Play"; }
+    }, 90);
+  };
+  document.querySelectorAll(".tab").forEach(btn => btn.addEventListener("click", async () => {
+    document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b === btn));
+    const live = btn.dataset.tab === "live";
+    $("tlLive").hidden = !live; $("tlReplay").hidden = live;
+    if (live) renderLive(); else if (await loadReplay()) renderReplay();
+  }));
+
+  addEventListener("resize", () => { if (status) render(); if (!$("tlReplay").hidden) renderReplay(); });
+  if (location.hash === "#replay") document.querySelector('.tab[data-tab="replay"]').click();
   poll(); loadPrompt();
   setInterval(poll, POLL_MS);
   setInterval(loadPrompt, POLL_MS * 3);
