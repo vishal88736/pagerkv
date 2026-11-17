@@ -15,8 +15,8 @@ import threading
 import time
 from typing import Any
 
-from common.tokens import count_tokens
 from common.summarizer import build_stub
+from common.tokens import count_tokens
 
 DEFAULT_DB = "node_b_archive.db"
 
@@ -250,12 +250,9 @@ def search(q: str, limit: int = 5) -> list[dict[str, Any]]:
         scored: list[tuple[int, sqlite3.Row]] = []
         for row in rows:
             text = (row["full_text"] or "").lower()
-            if words:
-                score = sum(1 for w in words if w.lower() in text)
-            else:
-                score = 1
-            if score > 0:
-                scored.append((score, row))
+            hits = sum(1 for w in words if w.lower() in text) if words else 1
+            if hits > 0:
+                scored.append((hits, row))
         scored.sort(key=lambda item: (-item[0], item[1]["key"]))
         results = []
         for score, row in scored[:limit]:

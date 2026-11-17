@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
-from typing import AsyncIterator
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
@@ -19,11 +19,10 @@ from fastapi.responses import (
 
 from common import metrics
 from common.admin import TOKEN_HEADER, require_admin
-
 from common.schemas import (
     FaultRequest,
-    PolicyRequest,
     NodeAHealth,
+    PolicyRequest,
     PromptResponse,
     PutRequest,
     PutResponse,
@@ -197,10 +196,10 @@ async def context_prompt(request: Request) -> dict:
     return await _state(request).prompt()
 
 
-@app.get("/context/search")
+@app.get("/context/search", response_model=None)
 async def context_search(
     request: Request, q: str = "", limit: int = 5
-) -> dict:
+) -> dict | JSONResponse:
     state = _state(request)
     replicator = _replicator(request)
     remote = await replicator.search(q, limit)
@@ -243,7 +242,7 @@ async def put_context(key: str, body: PutRequest, request: Request) -> dict:
             priority=body.priority,
         )
     except KeyNotFound:
-        raise HTTPException(status_code=404, detail=f"key {key!r} disappeared")
+        raise HTTPException(status_code=404, detail=f"key {key!r} disappeared") from None
 
 
 @app.get("/context/{key:path}")
@@ -258,7 +257,7 @@ async def get_context(key: str, request: Request, hydrate: bool = False):
     try:
         return await state.hydrate(key, _replicator(request))
     except KeyNotFound:
-        raise HTTPException(status_code=404, detail=f"no such key {key!r}")
+        raise HTTPException(status_code=404, detail=f"no such key {key!r}") from None
     except HydrateUnavailable as exc:
         return JSONResponse(
             status_code=503,
@@ -277,7 +276,7 @@ async def patch_context(key: str, body: PolicyRequest, request: Request) -> dict
     try:
         return await _state(request).set_policy(key, body.pinned, body.priority)
     except KeyNotFound:
-        raise HTTPException(status_code=404, detail=f"no such key {key!r}")
+        raise HTTPException(status_code=404, detail=f"no such key {key!r}") from None
 
 
 @app.delete("/context/{key:path}", status_code=204)

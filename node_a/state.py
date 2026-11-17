@@ -80,16 +80,17 @@ def compress_key_ranges(keys: list[str]) -> str:
         numbers = sorted(set(groups[prefix]))
         runs: list[str] = []
         start = prev = numbers[0]
-        for number in numbers[1:] + [None]:
-            if number is not None and number == prev + 1:
-                prev = number
+        tail: list[int | None] = [*numbers[1:], None]
+        for nxt in tail:
+            if nxt is not None and nxt == prev + 1:
+                prev = nxt
                 continue
             if start == prev:
                 runs.append(f"{prefix}{start}")
             else:
                 runs.append(f"{prefix}{start}–{prefix}{prev}")
-            if number is not None:
-                start = prev = number
+            if nxt is not None:
+                start = prev = nxt
         parts.extend(runs)
     parts.extend(sorted(others))
     return ", ".join(parts)
@@ -198,7 +199,7 @@ class NodeAState:
         if not os.path.exists(self.state_file):
             return
         try:
-            with open(self.state_file, "r", encoding="utf-8") as handle:
+            with open(self.state_file, encoding="utf-8") as handle:
                 payload = json.load(handle)
         except (OSError, ValueError):
             logger.exception("could not load Node A state from %s", self.state_file)
@@ -528,7 +529,7 @@ class NodeAState:
         self,
         key: str,
         text: str,
-        replicator: "Replicator",
+        replicator: Replicator,
         pinned: bool | None = None,
         priority: int | None = None,
     ) -> dict[str, Any]:
@@ -614,7 +615,7 @@ class NodeAState:
             self._persist()
             return self._view(entry)
 
-    async def hydrate(self, key: str, replicator: "Replicator") -> dict[str, Any]:
+    async def hydrate(self, key: str, replicator: Replicator) -> dict[str, Any]:
         async with self._lock:
             entry = self.entries.get(key)
             if entry is None:
@@ -690,7 +691,7 @@ class NodeAState:
     # Retry loop support
     # ------------------------------------------------------------------
 
-    async def retry_dirty(self, replicator: "Replicator") -> None:
+    async def retry_dirty(self, replicator: Replicator) -> None:
         async with self._lock:
             pending = [
                 (entry.key, entry.version, entry.full_text)
@@ -720,7 +721,7 @@ class NodeAState:
 
     @staticmethod
     def _apply_result(
-        entry: KeyEntry, version: int, result: "ReplicationResult"
+        entry: KeyEntry, version: int, result: ReplicationResult
     ) -> None:
         """Apply Node B's answer for ``version`` (caller checked it is current)."""
         if result.ok:
@@ -759,7 +760,7 @@ class NodeAState:
     # DELETE / status / prompt / summaries
     # ------------------------------------------------------------------
 
-    async def delete(self, key: str, replicator: "Replicator | None" = None) -> bool:
+    async def delete(self, key: str, replicator: Replicator | None = None) -> bool:
         """Remove ``key`` locally and (best effort, retried) from Node B."""
         async with self._lock:
             entry = self.entries.pop(key, None)
@@ -774,7 +775,7 @@ class NodeAState:
         return True
 
     async def _settle_delete(
-        self, key: str, version: int, replicator: "Replicator"
+        self, key: str, version: int, replicator: Replicator
     ) -> None:
         if not await replicator.delete(key, version):
             return  # Node B unreachable; the retry loop tries again

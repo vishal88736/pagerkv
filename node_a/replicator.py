@@ -215,7 +215,7 @@ class Replicator:
 
 
 async def retry_loop(
-    state: "NodeAState", replicator: Replicator, interval_s: float
+    state: NodeAState, replicator: Replicator, interval_s: float
 ) -> None:
     """Retry dirty keys forever; one bad iteration must never kill the loop."""
     while True:

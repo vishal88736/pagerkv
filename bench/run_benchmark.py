@@ -479,5 +479,28 @@ def run() -> dict:
     return summary
 
 
+def check(summary: dict) -> list[str]:
+    """Regression gates used by CI (``--check``)."""
+    failures = []
+    if summary["lossless"] != summary["total"]:
+        failures.append(f"lossless {summary['lossless']}/{summary['total']}")
+    if summary["max_prompt_tokens"] > MAX_WINDOW_TOKENS:
+        failures.append(
+            f"max prompt {summary['max_prompt_tokens']} > budget {MAX_WINDOW_TOKENS}"
+        )
+    if summary["recall_outside_fault_success"] != summary["recall_outside_fault_total"]:
+        failures.append(
+            f"recall outside fault {summary['recall_outside_fault_success']}"
+            f"/{summary['recall_outside_fault_total']}"
+        )
+    return failures
+
+
 if __name__ == "__main__":
-    run()
+    result = run()
+    if "--check" in sys.argv[1:]:
+        problems = check(result)
+        if problems:
+            print("BENCHMARK CHECK FAILED: " + "; ".join(problems))
+            sys.exit(1)
+        print("Benchmark check passed.")

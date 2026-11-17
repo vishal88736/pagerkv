@@ -10,15 +10,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 
 from common import metrics
 from common.admin import require_admin
-
 from common.schemas import (
     ArchiveResponse,
     FaultRequest,

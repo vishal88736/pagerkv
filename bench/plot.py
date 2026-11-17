@@ -40,7 +40,7 @@ def main() -> None:
     baseline = data["baseline"]
     pagerkv = data["pagerkv"]
 
-    crash_turns = [turn for turn, value in zip(turns, baseline) if value is not None]
+    crash_turns = [turn for turn, value in zip(turns, baseline, strict=True) if value is not None]
     crash_turn = max(crash_turns) + 1 if crash_turns else None
 
     fig, ax = plt.subplots(figsize=(12, 6))

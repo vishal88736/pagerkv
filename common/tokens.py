@@ -8,7 +8,10 @@ per token.
 
 from __future__ import annotations
 
+from typing import Any
+
 _ENCODING_NAME = "cl100k_base"
+_ENCODER: Any
 
 try:  # pragma: no cover - depends on the installation environment
     import tiktoken

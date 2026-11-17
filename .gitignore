@@ -10,3 +10,5 @@ venv/
 node_a_state.json
 node_a_state.json.tmp
 bench/_run/
+.mypy_cache/
+.ruff_cache/
