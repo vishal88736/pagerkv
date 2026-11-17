@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+node_a_state.json
+node_a_state.json.tmp
+bench/_run/
