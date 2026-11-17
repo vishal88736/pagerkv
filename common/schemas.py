@@ -111,6 +111,8 @@ class StatusResponse(BaseModel):
     over_budget: bool
     tokens_saved_by_replication: int
     page_faults: int
+    omitted_from_prompt: int = 0
+    index_tokens: int = 0
     keys: dict[str, KeyStatus]
 
 

@@ -77,7 +77,7 @@ Residence (per key):
                      (only if archive version == entry.version)
 ```
 
-## The five invariants
+## The six invariants
 
 1. A key is paged out **only** if `acked_version == version` and its status is
    `SYNCED_ARCHIVED`.
@@ -88,6 +88,9 @@ Residence (per key):
    dirty, `over_budget` is `true`. Nothing is deleted or truncated.
 5. An ack for an old version is ignored. The key stays pending/dirty until its
    current version is acked.
+6. Every key in Node A is discoverable: it appears in the rendered prompt as full
+   text or stub, or it is named in `archive_index`, or
+   `GET /context/search` with its key name returns it.
 
 ## Prompt budget and headers
 
@@ -104,14 +107,27 @@ alone costs roughly 20-30 tokens per paged key, plus a header. With 100 live
 keys, the stubs and headers cost about 3800 tokens, which cannot fit in 2000 no
 matter how many full blocks are paged out. To honor the hard cap without
 deleting anything, `GET /context/prompt` omits the **oldest already-paged**
-blocks from the rendered view when necessary. Those blocks remain in Node A's
-state (with their stubs) and in Node B (full text), are still listed by
-`/context/status`, and can still be hydrated by key. Resident full blocks are
-never trimmed. During an outage, dirty residents are never trimmed or paged, so
-the prompt can exceed 2000 and `over_budget` is `true`; that is correct.
+blocks from the rendered view when necessary, and renders a single
+`### archive_index` block **first** that names them (newest omitted first,
+compressed into ranges like `obs_1–obs_57`, up to `INDEX_BUDGET_TOKENS` = 150
+tokens, with `+M more` for the rest). Those blocks remain in Node A's state
+(with their stubs) and in Node B (full text), are still listed by
+`/context/status` (`omitted_from_prompt`, `index_tokens`), and can still be
+hydrated by key or found via `GET /context/search`. Resident full blocks are
+never trimmed or omitted. During an outage, dirty residents are never trimmed
+or paged, so the prompt can exceed 2000 and `over_budget` is `true`; that is
+correct.
 
-This is the one place where the rendered prompt is smaller than the full block
-list. It is a view-only budget, not eviction: no data is lost.
+The index block is itself never omitted. Stubs are omitted only after the index
+block's budget is reserved, so the hard cap always holds when it can. This is
+the one place where the rendered prompt is smaller than the full block list,
+and it is a view-only budget, not eviction: no data is lost, and every key
+stays discoverable through the prompt, the index, or search (invariant 6).
+
+Node B also exposes `GET /search?q=<text>&limit=5` (SQLite FTS5, with a LIKE
+fallback) and Node A proxies it as `GET /context/search?q=<text>&limit=5`,
+merging local key-name matches so dirty keys are searchable before Node B has
+them.
 
 ## Configuration
 
@@ -121,6 +137,7 @@ Node A reads these environment variables:
 |---|---|---|
 | `NODE_B_URL` | `http://127.0.0.1:8002` | where Node B lives |
 | `MAX_WINDOW_TOKENS` | `2000` | hard cap for the active prompt |
+| `INDEX_BUDGET_TOKENS` | `150` | tokens reserved inside the cap for `archive_index` |
 | `REPLICATION_TIMEOUT_S` | `2.0` | timeout for every Node A -> Node B call |
 | `RETRY_INTERVAL_S` | `3.0` | dirty-key retry period |
 | `NODE_A_STATE_FILE` | `node_a_state.json` | atomic JSON state checkpoint |
@@ -171,7 +188,8 @@ curl -s -X POST http://127.0.0.1:8002/admin/fault \
 curl -s -X POST http://127.0.0.1:8002/admin/fault \
   -H 'content-type: application/json' -d '{"mode":"none","delay_s":0}'
 
-curl -s http://127.0.0.1:8002/health
+# Search the archive (FTS5, with a LIKE fallback)
+curl -s 'http://127.0.0.1:8002/search?q=deploy+token&limit=5'
 ```
 
 With `mode=down`, `/replicate` and `/archive/{key}` return 503; `/health` and
@@ -198,8 +216,8 @@ curl -s http://127.0.0.1:8001/context/status
 # What the agent would put in its prompt, in created_at order
 curl -s http://127.0.0.1:8001/context/prompt
 
-# Remove a key from Node A only; Node B keeps its archive
-curl -s -X DELETE http://127.0.0.1:8001/context/db_schema
+# Search Node A (merges Node B results with local key-name matches)
+curl -s 'http://127.0.0.1:8001/context/search?q=obs_17&limit=5'
 
 curl -s http://127.0.0.1:8001/health
 ```
@@ -216,7 +234,7 @@ Hydration failures are explicit:
 
 ## Tests
 
-`pytest -q` currently reports **17 passed**. The suite starts real Node B and
+`pytest -q` currently reports **19 passed**. The suite starts real Node B and
 Node A subprocesses on 8001/8002 with a temporary database and state file,
 resets fault injection before each test, uses unique keys, and runs entirely
 offline.
@@ -225,7 +243,8 @@ Covered:
 
 - Node B: round-trip and sha256, stale-write rejection, short stubs, 503 down.
 - Node A: under-budget residency, LRU paging, exact hydration, prompt budget,
-  literal `status` route, version bump.
+  literal `status` route, version bump, key-range compression, discoverability
+  of all 120 keys.
 - Faults: dirty keys never evicted, recovery after Node B returns, slow Node B
   returns within the timeout, stale/out-of-order acks ignored, hydrate 503 with
   stub while down, Node A restart preserves keys/versions/statuses.
@@ -238,20 +257,28 @@ prompt; it crashes when that prompt exceeds 2000 tokens. The PagerKV agent does
 `PUT /context/obs_{turn}`, reads `/context/prompt`, records dirty/paged/saved
 counts, hydrates a paged older key every 10th turn, and runs a whole-outage
 window: Node B is set `down` at turn 40 and `none` at turn 50. At the end it
-hydrates **every** key and compares sha256 with the original.
+hydrates **every** key and compares sha256 with the original. Every observation
+also embeds a unique `Fact obs_N: deploy token is XXXX.` line, and every 10th
+turn (plus 20 random keys at the end) the simulated agent tries to recover that
+fact using only the prompt, `/context/search`, and hydration. Recall succeeds
+when the hydrated full text contains the stored code.
 
 Latest run:
 
 ```
-Baseline crashed at turn 5 | PagerKV ran 100 turns | max prompt tokens 5625 | lossless 100/100 | page faults 109
-Max prompt tokens outside the fault window: 1998
+Baseline crashed at turn 5 | PagerKV ran 100 turns | max prompt tokens 5567 | lossless 100/100 | page faults 137
+recall 29/30 (outside-fault 28/28)
+Max prompt tokens outside the fault window: 1995
 ```
 
 - Baseline crash: turn 5 (requirement: before turn 15).
 - PagerKV completed all 100 turns.
-- Outside turns 40-50: maximum prompt 1998 tokens (cap 2000).
+- Outside turns 40-50: maximum prompt 1995 tokens (cap 2000).
 - Lossless: 100/100 full texts recovered by hydration.
-- The 5625-token maximum occurs inside the outage window, where 10 dirty blocks
+- Recall: 29/30 overall; the single miss is turn 40, inside the outage window,
+  where `/context/search` correctly returns 503 because Node B is down. Outside
+  the fault window recall is 28/28 (100%).
+- The 5567-token maximum occurs inside the outage window, where 10 dirty blocks
   cannot be paged out. This is intentional safety over budget, not a bug.
 
 ![PagerKV benchmark](bench/benchmark.png)

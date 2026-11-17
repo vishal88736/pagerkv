@@ -13,7 +13,7 @@ import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Query
 
 from common.schemas import (
     ArchiveResponse,
@@ -85,6 +85,14 @@ async def replicate(request: ReplicateRequest) -> ReplicateResponse:
         sha256=row["sha256"],
         stale_write=bool(row.get("stale_write", False)),
     )
+
+
+@app.get(
+    "/search",
+    dependencies=[Depends(fault_guard)],
+)
+async def search(q: str = Query(default=""), limit: int = Query(default=5, ge=1, le=50)):
+    return {"results": archive.search(q, limit)}
 
 
 @app.get(

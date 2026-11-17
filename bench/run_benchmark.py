@@ -58,14 +58,16 @@ class ContextLengthExceededError(Exception):
 # ---------------------------------------------------------------------------
 
 
-def make_observation(turn: int, target_tokens: int, rng: random.Random) -> str:
+def make_observation(turn: int, target_tokens: int, rng: random.Random) -> tuple[str, str]:
     """Varied text of approximately ``target_tokens``.
 
     The first sentence is deliberately short; it becomes the extractive stub.
-    The rest of the block carries the bulk of the tokens.
+    A unique fact with a 4-char code is embedded so recall can be tested.
     """
+    code = "".join(rng.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(4))
     parts = [
-        f"Observation {turn}: {rng.choice(SERVICES)} telemetry update."
+        f"Observation {turn}: {rng.choice(SERVICES)} telemetry update.",
+        f"Fact obs_{turn}: deploy token is {code}.",
     ]
     sentence = 0
     while count_tokens("\n".join(parts)) < target_tokens:
@@ -76,16 +78,19 @@ def make_observation(turn: int, target_tokens: int, rng: random.Random) -> str:
             f"{rng.choice(PHASES)} job processed {rng.randint(5, 900000)} rows "
             f"and wrote {rng.randint(0, 50000)} records."
         )
-    return "\n".join(parts)
+    return "\n".join(parts), code
 
 
-def build_observations() -> dict[int, str]:
+def build_observations() -> tuple[dict[int, str], dict[int, str]]:
     rng = random.Random(42)
     observations: dict[int, str] = {}
+    codes: dict[int, str] = {}
     for turn in range(1, TURNS + 1):
         target = rng.randint(150, 900)
-        observations[turn] = make_observation(turn, target, rng)
-    return observations
+        text, code = make_observation(turn, target, rng)
+        observations[turn] = text
+        codes[turn] = code
+    return observations, codes
 
 
 def sha256(text: str) -> str:
@@ -238,7 +243,7 @@ def wait_for_clean_recovery(a_client: httpx.Client, timeout: float = 20.0) -> No
 
 
 def run() -> dict:
-    observations = build_observations()
+    observations, codes = build_observations()
 
     # ---- baseline -----------------------------------------------------
     baseline = BaselineAgent()
@@ -256,6 +261,42 @@ def run() -> dict:
     page_fault_checks: list[int] = []
     lossless = 0
     hydrate_rng = random.Random(99)
+    recall_rng = random.Random(7)
+    recall_results: list[tuple[int, int, bool]] = []  # (turn, key_turn, ok)
+
+    def try_recall(key_turn: int, in_fault: bool) -> bool:
+        key = f"obs_{key_turn}"
+        code = codes[key_turn]
+        # (a) prompt text
+        try:
+            prompt_text = client.get("/context/prompt").json()["prompt"]
+        except Exception:
+            prompt_text = ""
+        if code in prompt_text:
+            return True
+        # (b) search
+        try:
+            search_resp = client.get(
+                "/context/search", params={"q": f"Fact {key}"}
+            )
+        except Exception:
+            return False
+        if search_resp.status_code != 200:
+            return False  # fault window: Node B down
+        results = search_resp.json().get("results", [])
+        target = key
+        if not any(r.get("key") == key for r in results):
+            if not results:
+                return False
+            target = results[0].get("key", key)
+        # (c) hydrate
+        try:
+            hyd = client.get(f"/context/{target}?hydrate=true")
+        except Exception:
+            return False
+        if hyd.status_code != 200:
+            return False
+        return code in hyd.json().get("full_text", "")
 
     with tempfile.TemporaryDirectory(prefix="pagerkv-bench-") as tmp:
         nodes = Nodes(Path(tmp))
@@ -299,6 +340,7 @@ def run() -> dict:
                                 "tokens_saved": status[
                                     "tokens_saved_by_replication"
                                 ],
+                                "recall_ok": "",
                             }
                         )
 
@@ -332,6 +374,13 @@ def run() -> dict:
                                         body["full_text"]
                                     ) == sha256(observations[chosen_turn])
 
+                            # Recall check: can the agent recover an older fact?
+                            recall_key_turn = hydrate_rng.randrange(1, turn)
+                            in_fault = FAULT_START_TURN <= turn < FAULT_END_TURN
+                            ok = try_recall(recall_key_turn, in_fault)
+                            recall_results.append((turn, recall_key_turn, ok))
+                            rows[-1]["recall_ok"] = "1" if ok else "0"
+
                     # ---- end-to-end lossless check ---------------------
                     for turn in range(1, TURNS + 1):
                         response = client.get(
@@ -343,6 +392,12 @@ def run() -> dict:
                             lossless += 1
                         else:
                             print(f"LOSSLESS MISMATCH at obs_{turn}")
+
+                    # ---- recall: 20 random older keys -------------------
+                    random_keys = recall_rng.sample(range(1, TURNS + 1), 20)
+                    for kt in random_keys:
+                        ok = try_recall(kt, False)
+                        recall_results.append((TURNS + 1, kt, ok))
 
                     page_faults = client.get(
                         "/context/status"
@@ -360,6 +415,7 @@ def run() -> dict:
                 "dirty_keys",
                 "paged_out_keys",
                 "tokens_saved",
+                "recall_ok",
             ],
         )
         writer.writeheader()
@@ -373,6 +429,15 @@ def run() -> dict:
     max_outside_fault = max(outside_fault) if outside_fault else 0
     max_prompt = max(row["pagerkv_prompt_tokens"] for row in rows)
 
+    outside_fault_recall = [
+        ok for (turn, _kt, ok) in recall_results
+        if not (FAULT_START_TURN <= turn <= FAULT_END_TURN)
+    ]
+    recall_success = sum(1 for ok in outside_fault_recall if ok)
+    recall_total = len(outside_fault_recall)
+    all_recall_success = sum(1 for (_t, _k, ok) in recall_results if ok)
+    all_recall_total = len(recall_results)
+
     summary = {
         "crash_turn": crash_turn,
         "turns_run": len(rows),
@@ -382,6 +447,10 @@ def run() -> dict:
         "total": TURNS,
         "page_faults": page_faults,
         "page_fault_checks": len(page_fault_checks),
+        "recall_success": all_recall_success,
+        "recall_total": all_recall_total,
+        "recall_outside_fault_success": recall_success,
+        "recall_outside_fault_total": recall_total,
         "rows": rows,
     }
 
@@ -391,6 +460,10 @@ def run() -> dict:
         f"max prompt tokens {max_prompt} | "
         f"lossless {lossless}/{TURNS} | "
         f"page faults {page_faults}"
+    )
+    print(
+        f"recall {all_recall_success}/{all_recall_total} "
+        f"(outside-fault {recall_success}/{recall_total})"
     )
     print(f"Max prompt tokens outside the fault window: {max_outside_fault}")
     print(f"CSV: {RESULTS_CSV}")

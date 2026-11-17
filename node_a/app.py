@@ -41,6 +41,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     state = NodeAState(
         max_window_tokens=config.MAX_WINDOW_TOKENS,
         state_file=config.NODE_A_STATE_FILE,
+        index_budget_tokens=config.INDEX_BUDGET_TOKENS,
     )
 
     app.state.node_state = state
@@ -98,6 +99,35 @@ async def context_status(request: Request) -> dict:
 @app.get("/context/prompt", response_model=PromptResponse)
 async def context_prompt(request: Request) -> dict:
     return await _state(request).prompt()
+
+
+@app.get("/context/search")
+async def context_search(
+    request: Request, q: str = "", limit: int = 5
+) -> dict:
+    state = _state(request)
+    replicator = _replicator(request)
+    local = await state.local_search(q)
+    remote = await replicator.search(q, limit)
+    if remote is None:
+        if local:
+            return {"results": local[:limit]}
+        return JSONResponse(
+            status_code=503, content={"error": "Node B unavailable"}
+        )
+    by_key: dict[str, dict] = {}
+    for item in remote:
+        by_key[item["key"]] = dict(item)
+    for item in local:
+        existing = by_key.get(item["key"])
+        if existing is None or item["score"] > existing.get("score", 0):
+            by_key[item["key"]] = dict(item)
+        else:
+            existing["score"] = max(existing.get("score", 0), item["score"])
+    merged = sorted(
+        by_key.values(), key=lambda r: (-r.get("score", 0), r["key"])
+    )
+    return {"results": merged[:limit]}
 
 
 @app.put("/context/{key}", response_model=PutResponse)

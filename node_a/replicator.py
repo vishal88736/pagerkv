@@ -147,6 +147,33 @@ class Replicator:
             stub=payload.get("stub"),
         )
 
+    async def search(self, q: str, limit: int = 5) -> list[dict[str, Any]] | None:
+        """Proxy to Node B /search.  Returns None on any error."""
+        try:
+            response = await self.client.get(
+                f"{self.base_url}/search",
+                params={"q": q, "limit": limit},
+                timeout=self.timeout_s,
+            )
+        except httpx.TimeoutException:
+            return None
+        except httpx.HTTPError:
+            return None
+        except Exception:  # pragma: no cover - defensive
+            return None
+        if response.status_code != 200:
+            return None
+        try:
+            payload = response.json()
+        except ValueError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        results = payload.get("results")
+        if not isinstance(results, list):
+            return None
+        return results
+
     async def health(self) -> bool:
         try:
             response = await self.client.get(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 
 from common.tokens import count_tokens
+from node_a.state import compress_key_ranges
 
 
 def _sha(text: str) -> str:
@@ -119,6 +120,65 @@ def test_status_route_not_treated_as_key(a_client):
     assert prompt.status_code == 200
     assert "prompt" in prompt.json() and "tokens" in prompt.json()
 
+
+
+def test_compress_key_ranges():
+    assert compress_key_ranges([]) == ""
+    assert compress_key_ranges(["obs_3"]) == "obs_3"
+    assert compress_key_ranges(["obs_1", "obs_2", "obs_3", "obs_4", "obs_5"]) == "obs_1–obs_5"
+    assert (
+        compress_key_ranges(["obs_1", "obs_2", "obs_3", "obs_5", "obs_7", "obs_8", "obs_9"])
+        == "obs_1–obs_3, obs_5, obs_7–obs_9"
+    )
+    assert (
+        compress_key_ranges(["obs_10", "obs_9", "obs_8", "obs_1", "obs_2"])
+        == "obs_1–obs_2, obs_8–obs_10"
+    )
+    assert compress_key_ranges(["foo", "bar", "baz"]) == "bar, baz, foo"
+    assert (
+        compress_key_ranges(["a1", "a2", "a3", "b1", "b2"]) == "a1–a3, b1–b2"
+    )
+    assert compress_key_ranges(["obs_1", "obs_3", "obs_5"]) == "obs_1, obs_3, obs_5"
+
+
+def test_all_keys_discoverable(a_client, key_factory, text_factory):
+    import re
+
+    keys = [key_factory(f"disc_{i}") for i in range(120)]
+    for i, key in enumerate(keys):
+        _put(a_client, key, text_factory(50, seed=7000 + i))
+
+    status = _status(a_client)
+    prompt = a_client.get("/context/prompt").json()["prompt"]
+    assert status["omitted_from_prompt"] > 0
+    assert status["index_tokens"] > 0
+    assert "### archive_index" in prompt
+
+    # Expand the Keys: list in the index block (including ranges).
+    index_section = prompt.split("### archive_index", 1)[1].split("###", 1)[0]
+    keys_line = [line for line in index_section.splitlines() if line.startswith("Keys:")][0]
+    listed_text = keys_line[len("Keys:"):].split(", +")[0]
+    indexed: set[str] = set()
+    for chunk in listed_text.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        m = re.match(r"^(\D+?)(\d+)–\1(\d+)$", chunk)
+        if m:
+            prefix, lo, hi = m.group(1), int(m.group(2)), int(m.group(3))
+            for n in range(lo, hi + 1):
+                indexed.add(f"{prefix}{n}")
+        else:
+            indexed.add(chunk)
+
+    for key in keys:
+        in_prompt = f"### {key} (v" in prompt
+        in_index = key in indexed
+        search_ok = False
+        response = a_client.get("/context/search", params={"q": key})
+        if response.status_code == 200:
+            search_ok = any(r["key"] == key for r in response.json()["results"])
+        assert in_prompt or in_index or search_ok, f"key {key} is not discoverable"
 
 def test_update_key_bumps_version(a_client, key_factory, text_factory):
     key = key_factory("nodea_update")

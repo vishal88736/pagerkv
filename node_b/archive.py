@@ -1,9 +1,9 @@
 """SQLite-backed lossless archive for Node B.
 
 A fresh sqlite3 connection is opened for every operation.  Writes are
-serialized with a process-wide lock so concurrent FastAPI requests cannot race
-each other into a ``database is locked`` error.  SQLite itself still provides
-durability across restarts.
+serialized with a process-wide lock.  When the SQLite build supports FTS5 a
+virtual table mirrors the archive for full-text search; otherwise a LIKE-based
+fallback is used.
 """
 
 from __future__ import annotations
@@ -32,9 +32,10 @@ CREATE TABLE IF NOT EXISTS archive (
 );
 """
 
+_FTS_AVAILABLE: bool | None = None
+
 
 def db_path() -> str:
-    """Resolved on every call so NODE_B_DB can be set by the launcher."""
     return os.environ.get("NODE_B_DB", DEFAULT_DB)
 
 
@@ -45,9 +46,26 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+def _detect_fts(conn: sqlite3.Connection) -> bool:
+    global _FTS_AVAILABLE
+    if _FTS_AVAILABLE is not None:
+        return _FTS_AVAILABLE
+    try:
+        conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS _fts5_probe USING fts5(x)")
+        conn.execute("DROP TABLE _fts5_probe")
+        _FTS_AVAILABLE = True
+    except sqlite3.OperationalError:
+        _FTS_AVAILABLE = False
+    return _FTS_AVAILABLE
+
+
 def init_db() -> None:
     with _connect() as conn:
         conn.execute(_SCHEMA)
+        if _detect_fts(conn):
+            conn.execute(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS archive_fts USING fts5(key, full_text)"
+            )
         conn.commit()
 
 
@@ -77,11 +95,6 @@ _write_lock = threading.Lock()
 
 
 def save(key: str, version: int, full_text: str) -> dict[str, Any]:
-    """Archive one version of ``key``.
-
-    A stale write (incoming version lower than the stored version) is rejected:
-    the existing row is returned unchanged with ``stale_write=True``.
-    """
     _ensure_initialized()
 
     full_tokens = count_tokens(full_text)
@@ -116,6 +129,14 @@ def save(key: str, version: int, full_text: str) -> dict[str, Any]:
                 """,
                 (key, version, full_text, full_tokens, stub, sha256, updated_at),
             )
+
+            if _FTS_AVAILABLE:
+                conn.execute("DELETE FROM archive_fts WHERE key = ?", (key,))
+                conn.execute(
+                    "INSERT INTO archive_fts (key, full_text) VALUES (?, ?)",
+                    (key, full_text),
+                )
+
             conn.commit()
 
             return {
@@ -142,5 +163,72 @@ def get(key: str) -> dict[str, Any] | None:
         if row is None:
             return None
         return _row_to_dict(row)
+    finally:
+        conn.close()
+
+
+def search(q: str, limit: int = 5) -> list[dict[str, Any]]:
+    _ensure_initialized()
+    q = (q or "").strip()
+    if not q:
+        return []
+    limit = max(1, min(int(limit), 50))
+
+    conn = _connect()
+    try:
+        if _FTS_AVAILABLE:
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT a.key, a.version, a.stub, bm25(archive_fts) AS bm
+                    FROM archive_fts f
+                    JOIN archive a ON a.key = f.key
+                    WHERE archive_fts MATCH ?
+                    ORDER BY bm
+                    LIMIT ?
+                    """,
+                    (q, limit),
+                ).fetchall()
+                results = []
+                for row in rows:
+                    bm = row["bm"]
+                    score = -float(bm) if bm is not None else 0.0
+                    results.append(
+                        {
+                            "key": row["key"],
+                            "version": row["version"],
+                            "stub": row["stub"],
+                            "score": score,
+                        }
+                    )
+                return results
+            except sqlite3.OperationalError:
+                pass  # fall through to LIKE
+
+        words = [w for w in q.split() if w]
+        rows = conn.execute(
+            "SELECT key, version, stub, full_text FROM archive"
+        ).fetchall()
+        scored: list[tuple[int, sqlite3.Row]] = []
+        for row in rows:
+            text = (row["full_text"] or "").lower()
+            if words:
+                score = sum(1 for w in words if w.lower() in text)
+            else:
+                score = 1
+            if score > 0:
+                scored.append((score, row))
+        scored.sort(key=lambda item: (-item[0], item[1]["key"]))
+        results = []
+        for score, row in scored[:limit]:
+            results.append(
+                {
+                    "key": row["key"],
+                    "version": row["version"],
+                    "stub": row["stub"],
+                    "score": score,
+                }
+            )
+        return results
     finally:
         conn.close()

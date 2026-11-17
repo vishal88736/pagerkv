@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any
@@ -49,6 +50,42 @@ class HydrateUnavailable(Exception):
 
 class HydrateVersionMismatch(Exception):
     """Node B returned a different version than the one Node A expects."""
+
+
+def compress_key_ranges(keys: list[str]) -> str:
+    """Compress a list of keys into ranges where possible.
+
+    Keys sharing a prefix with consecutive integer suffixes collapse to
+    ``prefix{start}–prefix{end}``.  Non-numeric keys and gaps are preserved.
+    """
+    groups: dict[str, list[int]] = {}
+    others: list[str] = []
+    for key in keys:
+        match = re.match(r"^(.*?)(\d+)$", key)
+        if match:
+            prefix, number = match.group(1), int(match.group(2))
+            groups.setdefault(prefix, []).append(number)
+        else:
+            others.append(key)
+
+    parts: list[str] = []
+    for prefix in sorted(groups):
+        numbers = sorted(set(groups[prefix]))
+        runs: list[str] = []
+        start = prev = numbers[0]
+        for number in numbers[1:] + [None]:
+            if number is not None and number == prev + 1:
+                prev = number
+                continue
+            if start == prev:
+                runs.append(f"{prefix}{start}")
+            else:
+                runs.append(f"{prefix}{start}–{prefix}{prev}")
+            if number is not None:
+                start = prev = number
+        parts.extend(runs)
+    parts.extend(sorted(others))
+    return ", ".join(parts)
 
 
 @dataclass
@@ -91,8 +128,10 @@ class NodeAState:
         self,
         max_window_tokens: int = 2000,
         state_file: str = "node_a_state.json",
+        index_budget_tokens: int = 150,
     ) -> None:
         self.max_window_tokens = max_window_tokens
+        self.index_budget_tokens = index_budget_tokens
         self.state_file = state_file
         self.entries: dict[str, KeyEntry] = {}
         self.page_faults = 0
@@ -201,8 +240,6 @@ class NodeAState:
                     logger.warning("skipping paged entry without stub %r", key)
                     continue
 
-            # A process that died while a PUT was in flight leaves PENDING
-            # behind.  Treat it as dirty so the retry loop can resolve it.
             if consistency == PENDING_REPLICATION:
                 if acked_version == version:
                     consistency = SYNCED_ARCHIVED
@@ -234,70 +271,134 @@ class NodeAState:
     # Window accounting
     # ------------------------------------------------------------------
 
+    def _ordered_entries(self) -> list[KeyEntry]:
+        return sorted(self.entries.values(), key=lambda entry: (entry.created_at, entry.key))
+
+    def _block_text(self, entry: KeyEntry) -> str:
+        if entry.residence == RESIDENT_FULL and entry.full_text is not None:
+            body = entry.full_text
+        else:
+            body = entry.stub or ""
+        return f"### {entry.key} (v{entry.version})\n{body}"
+
+    def build_prompt(self, trim_to_budget: bool = False) -> str:
+        """Raw or trimmed prompt text (see render_prompt for index metadata)."""
+        if trim_to_budget:
+            return self.render_prompt()[0]
+        ordered = self._ordered_entries()
+        blocks = [self._block_text(e) for e in ordered]
+        return "\n\n".join(blocks)
+
+    def render_prompt(self) -> tuple[str, int, int]:
+        """Render the prompt, returning (text, omitted_count, index_tokens).
+
+        When the full block list fits, no index is rendered.  Otherwise the
+        oldest already-paged blocks are omitted and a single ``archive_index``
+        block is rendered first, listing them (newest omitted first) up to
+        ``index_budget_tokens``.  Resident full blocks are never omitted; dirty
+        residents can therefore still push the prompt over the cap, which is
+        reported as ``over_budget``.
+        """
+        ordered = self._ordered_entries()
+        blocks = [self._block_text(e) for e in ordered]
+
+        full_prompt = "\n\n".join(blocks)
+        if count_tokens(full_prompt) <= self.max_window_tokens:
+            return full_prompt, 0, 0
+
+        paged_indices = [
+            i for i, e in enumerate(ordered) if e.residence == PAGED_TO_NODE_B
+        ]
+        if not paged_indices:
+            return full_prompt, 0, 0
+
+        removed: set[int] = set()
+        for idx in paged_indices:  # oldest first
+            removed.add(idx)
+            omitted_keys = [
+                ordered[i].key for i in reversed(paged_indices) if i in removed
+            ]
+            omitted_tokens = sum(ordered[i].full_tokens for i in removed)
+            index_block = self._build_index_block(
+                len(removed), omitted_keys, omitted_tokens
+            )
+            index_tok = count_tokens(index_block)
+            remaining = "\n\n".join(
+                b for i, b in enumerate(blocks) if i not in removed
+            )
+            remaining_tok = count_tokens(remaining)
+            sep = 2 if remaining else 0
+            if index_tok + sep + remaining_tok <= self.max_window_tokens:
+                break
+            if idx == paged_indices[-1]:
+                break
+
+        if not removed:
+            return full_prompt, 0, 0
+
+        omitted_keys = [
+            ordered[i].key for i in reversed(paged_indices) if i in removed
+        ]
+        omitted_tokens = sum(ordered[i].full_tokens for i in removed)
+        index_block = self._build_index_block(
+            len(removed), omitted_keys, omitted_tokens
+        )
+        index_tok = count_tokens(index_block)
+        remaining = "\n\n".join(
+            b for i, b in enumerate(blocks) if i not in removed
+        )
+        if remaining:
+            prompt = index_block + "\n\n" + remaining
+        else:
+            prompt = index_block
+        return prompt, len(removed), index_tok
+
+    def _build_index_block(
+        self, omitted_count: int, omitted_keys_newest_first: list[str], omitted_full_tokens: int
+    ) -> str:
+        header = (
+            f"{omitted_count} older keys archived "
+            f"({omitted_full_tokens} tokens on Node B), not shown below."
+        )
+        find_line = (
+            "Find: GET /context/search?q=<words>   "
+            "Load: GET /context/{key}?hydrate=true"
+        )
+
+        chosen: list[str] = []
+        more = omitted_count
+        for key in omitted_keys_newest_first:
+            trial = chosen + [key]
+            trial_str = compress_key_ranges(trial)
+            more_trial = omitted_count - len(trial)
+            keys_line = f"Keys: {trial_str}" + (
+                f", +{more_trial} more" if more_trial > 0 else ""
+            )
+            candidate = f"### archive_index\n{header}\n{keys_line}\n{find_line}"
+            if count_tokens(candidate) <= self.index_budget_tokens:
+                chosen = trial
+                more = more_trial
+            else:
+                break
+
+        if chosen:
+            keys_str = compress_key_ranges(chosen)
+            keys_line = f"Keys: {keys_str}" + (f", +{more} more" if more > 0 else "")
+        else:
+            keys_line = f"Keys: +{omitted_count} more"
+        return f"### archive_index\n{header}\n{keys_line}\n{find_line}"
+
+    def window_tokens(self) -> int:
+        return count_tokens(self.render_prompt()[0])
+
+    def raw_window_tokens(self) -> int:
+        ordered = self._ordered_entries()
+        blocks = [self._block_text(e) for e in ordered]
+        return count_tokens("\n\n".join(blocks))
+
     def total_active_tokens(self) -> int:
         """Sum of every key's current contribution (full text or stub)."""
         return sum(entry.active_tokens for entry in self.entries.values())
-
-    def build_prompt(self, trim_to_budget: bool = False) -> str:
-        """Render the prompt from the blocks ordered by created_at.
-
-        When ``trim_to_budget`` is true, the oldest already-paged blocks are
-        omitted from the rendered prompt if the fully-expanded stub list would
-        exceed MAX_WINDOW_TOKENS.  This is a *view* decision: the entries and
-        their stubs remain in Node A, their full text remains in Node B, and
-        they can still be hydrated by key.  With many live keys the stubs and
-        their ``###`` headers alone can cost more than the whole cap, so
-        dropping cold stubs from the view is the only way to honor the hard
-        budget without deleting data.  Resident full blocks are never trimmed;
-        dirty residents therefore still expose the true over-budget state.
-        """
-        ordered = sorted(
-            self.entries.values(), key=lambda entry: (entry.created_at, entry.key)
-        )
-        blocks: list[str] = []
-        for entry in ordered:
-            if entry.residence == RESIDENT_FULL and entry.full_text is not None:
-                body = entry.full_text
-            else:
-                body = entry.stub or ""
-            blocks.append(f"### {entry.key} (v{entry.version})\n{body}")
-
-        if not trim_to_budget:
-            return "\n\n".join(blocks)
-
-        prompt = "\n\n".join(blocks)
-        if count_tokens(prompt) <= self.max_window_tokens:
-            return prompt
-
-        # Remove the oldest paged blocks from the rendered view, one at a
-        # time, until the prompt fits or only resident blocks are left.
-        removed: set[int] = set()
-        for index, entry in enumerate(ordered):
-            if entry.residence != PAGED_TO_NODE_B:
-                continue
-            removed.add(index)
-            candidate = "\n\n".join(
-                block for i, block in enumerate(blocks) if i not in removed
-            )
-            if count_tokens(candidate) <= self.max_window_tokens:
-                return candidate
-
-        return "\n\n".join(
-            block for i, block in enumerate(blocks) if i not in removed
-        )
-
-    def window_tokens(self) -> int:
-        """Actual rendered-prompt footprint, including ``###`` headers.
-
-        Compaction is enforced against the full block list (see ``compact``),
-        while the rendered prompt may omit cold stubs to respect the hard cap.
-        ``over_budget`` is measured on this rendered prompt.
-        """
-        return count_tokens(self.build_prompt(trim_to_budget=True))
-
-    def raw_window_tokens(self) -> int:
-        """Prompt footprint if every key is rendered, stubs included."""
-        return count_tokens(self.build_prompt(trim_to_budget=False))
 
     def tokens_saved_by_replication(self) -> int:
         saved = 0
@@ -316,7 +417,7 @@ class NodeAState:
         The caller MUST hold ``self._lock``.  Dirty / pending entries are never
         candidates, so the window may remain over budget without losing data.
         Eviction is driven by the full block list; if stubs alone cannot fit,
-        the rendered prompt drops the oldest cold stubs (see build_prompt).
+        the rendered prompt drops the oldest cold stubs via render_prompt.
         """
         while self.raw_window_tokens() > self.max_window_tokens:
             candidates = [
@@ -380,8 +481,6 @@ class NodeAState:
             if entry is None:
                 raise KeyNotFound(key)
             if entry.version != version:
-                # A newer PUT happened while this one was in flight.  Its ack
-                # must never touch the newer version.
                 logger.info(
                     "ignoring replication result for %s v%s; current version is v%s",
                     key,
@@ -543,26 +642,52 @@ class NodeAState:
                         else (entry.stub or "")
                     ),
                 }
-            window = self.window_tokens()
+            prompt, omitted, index_tokens = self.render_prompt()
+            window = count_tokens(prompt)
             return {
                 "active_window_tokens": window,
                 "max_window_tokens": self.max_window_tokens,
                 "over_budget": window > self.max_window_tokens,
                 "tokens_saved_by_replication": self.tokens_saved_by_replication(),
                 "page_faults": self.page_faults,
+                "omitted_from_prompt": omitted,
+                "index_tokens": index_tokens,
                 "keys": keys,
             }
 
     async def prompt(self) -> dict[str, Any]:
         async with self._lock:
-            prompt = self.build_prompt(trim_to_budget=True)
+            prompt, _omitted, _index = self.render_prompt()
             return {"prompt": prompt, "tokens": count_tokens(prompt)}
+
+    async def local_search(self, q: str) -> list[dict[str, Any]]:
+        async with self._lock:
+            needle = (q or "").lower()
+            results: list[dict[str, Any]] = []
+            if not needle:
+                return results
+            for entry in self.entries.values():
+                if needle in entry.key.lower():
+                    stub = entry.stub
+                    if stub is None:
+                        stub = (entry.full_text or "")[:120]
+                    results.append(
+                        {
+                            "key": entry.key,
+                            "version": entry.version,
+                            "stub": stub,
+                            "score": 1.0,
+                        }
+                    )
+            return results
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
     def _summary(self, entry: KeyEntry) -> dict[str, Any]:
+        prompt, _omitted, _index = self.render_prompt()
+        window = count_tokens(prompt)
         return {
             "key": entry.key,
             "version": entry.version,
@@ -570,8 +695,8 @@ class NodeAState:
             "residence": entry.residence,
             "active_tokens": entry.active_tokens,
             "full_tokens": entry.full_tokens,
-            "active_window_tokens": self.window_tokens(),
-            "over_budget": self.window_tokens() > self.max_window_tokens,
+            "active_window_tokens": window,
+            "over_budget": window > self.max_window_tokens,
         }
 
     @staticmethod
