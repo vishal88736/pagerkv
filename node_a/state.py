@@ -109,6 +109,10 @@ class KeyEntry:
     replication_error: str | None
     created_at: float
     last_access: float
+    # Token count of the version Node B actually holds.  It is deliberately
+    # separate from ``full_tokens``: a new version can be dirty while Node B
+    # still holds the previous one.
+    acked_full_tokens: int | None = None
     pinned_until_compaction: bool = False
     # Caller-controlled eviction policy: pinned keys stay resident; among
     # evictable keys the lowest priority goes first, then least recently used.
@@ -166,6 +170,11 @@ class NodeAState:
         self.tombstones: dict[str, int] = {}
         self.page_faults = 0
         self.over_budget = False
+        self.replication_attempts = 0
+        self.replication_successes = 0
+        self.replication_failures = 0
+        self.last_replication_error: str | None = None
+        self._render_cache: tuple[tuple[object, ...], str, int, int] | None = None
         self._lock = asyncio.Lock()
 
         self._load()
@@ -184,14 +193,35 @@ class NodeAState:
             tmp_path = f"{self.state_file}.tmp"
             payload = {
                 "page_faults": self.page_faults,
+                "replication_attempts": self.replication_attempts,
+                "replication_successes": self.replication_successes,
+                "replication_failures": self.replication_failures,
+                "last_replication_error": self.last_replication_error,
                 "tombstones": self.tombstones,
                 "keys": {key: asdict(entry) for key, entry in self.entries.items()},
             }
             with open(tmp_path, "w", encoding="utf-8") as handle:
-                json.dump(payload, handle, ensure_ascii=False, indent=2)
+                json.dump(
+                    payload,
+                    handle,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(tmp_path, self.state_file)
+            # Make the rename itself durable where the platform supports it.
+            try:
+                directory_fd = os.open(directory, os.O_RDONLY)
+            except OSError:
+                directory_fd = -1
+            if directory_fd >= 0:
+                try:
+                    os.fsync(directory_fd)
+                except OSError:
+                    pass
+                finally:
+                    os.close(directory_fd)
         except OSError:
             logger.exception("could not persist Node A state to %s", self.state_file)
 
@@ -212,6 +242,25 @@ class NodeAState:
             self.page_faults = int(payload.get("page_faults", 0))
         except (TypeError, ValueError):
             self.page_faults = 0
+
+        try:
+            self.replication_attempts = int(
+                payload.get("replication_attempts", 0)
+            )
+            self.replication_successes = int(
+                payload.get("replication_successes", 0)
+            )
+            self.replication_failures = int(
+                payload.get("replication_failures", 0)
+            )
+        except (TypeError, ValueError):
+            self.replication_attempts = 0
+            self.replication_successes = 0
+            self.replication_failures = 0
+        last_error = payload.get("last_replication_error")
+        self.last_replication_error = (
+            str(last_error) if last_error is not None else None
+        )
 
         raw_tombstones = payload.get("tombstones")
         if isinstance(raw_tombstones, dict):
@@ -242,6 +291,12 @@ class NodeAState:
                     )
                 )
                 acked_version = int(raw.get("acked_version", 0))
+                raw_acked_tokens = raw.get("acked_full_tokens")
+                acked_full_tokens = (
+                    int(raw_acked_tokens)
+                    if isinstance(raw_acked_tokens, int)
+                    else None
+                )
                 created_at = float(raw.get("created_at", now))
                 last_access = float(raw.get("last_access", created_at))
                 residence = str(raw.get("residence", RESIDENT_FULL))
@@ -299,6 +354,11 @@ class NodeAState:
                     )
 
             acked_version = max(0, min(acked_version, version))
+            if acked_full_tokens is None and acked_version == version:
+                # State files written by older versions did not record this.
+                acked_full_tokens = full_tokens
+            if acked_version == 0:
+                acked_full_tokens = None
 
             self.entries[key] = KeyEntry(
                 key=key,
@@ -309,6 +369,7 @@ class NodeAState:
                 residence=residence,
                 consistency_status=consistency,
                 acked_version=acked_version,
+                acked_full_tokens=acked_full_tokens,
                 replication_error=replication_error,
                 created_at=created_at,
                 last_access=last_access,
@@ -348,19 +409,35 @@ class NodeAState:
         ``index_budget_tokens``.  Resident full blocks are never omitted; dirty
         residents can therefore still push the prompt over the cap, which is
         reported as ``over_budget``.
+
+        The result is cached until a prompt-visible field changes, so status,
+        metrics and dashboard polls do not re-tokenize the whole window.
         """
         ordered = self._ordered_entries()
-        blocks = [self._block_text(e) for e in ordered]
+        signature = tuple(
+            (
+                entry.key,
+                entry.version,
+                entry.residence,
+                entry.stub,
+                entry.full_text is not None,
+            )
+            for entry in ordered
+        )
+        if self._render_cache is not None and self._render_cache[0] == signature:
+            _, text, omitted, index_tokens = self._render_cache
+            return text, omitted, index_tokens
 
+        blocks = [self._block_text(e) for e in ordered]
         full_prompt = "\n\n".join(blocks)
         if count_tokens(full_prompt) <= self.max_window_tokens:
-            return full_prompt, 0, 0
+            return self._cache_render(signature, full_prompt, 0, 0)
 
         paged_indices = [
             i for i, e in enumerate(ordered) if e.residence != RESIDENT_FULL
         ]
         if not paged_indices:
-            return full_prompt, 0, 0
+            return self._cache_render(signature, full_prompt, 0, 0)
 
         removed: set[int] = set()
         for idx in paged_indices:  # oldest first
@@ -384,7 +461,7 @@ class NodeAState:
                 break
 
         if not removed:
-            return full_prompt, 0, 0
+            return self._cache_render(signature, full_prompt, 0, 0)
 
         omitted_keys = [
             ordered[i].key for i in reversed(paged_indices) if i in removed
@@ -401,7 +478,17 @@ class NodeAState:
             prompt = index_block + "\n\n" + remaining
         else:
             prompt = index_block
-        return prompt, len(removed), index_tok
+        return self._cache_render(signature, prompt, len(removed), index_tok)
+
+    def _cache_render(
+        self,
+        signature: tuple[object, ...],
+        prompt: str,
+        omitted: int,
+        index_tokens: int,
+    ) -> tuple[str, int, int]:
+        self._render_cache = (signature, prompt, omitted, index_tokens)
+        return prompt, omitted, index_tokens
 
     def _build_index_block(
         self, omitted_count: int, omitted_keys_newest_first: list[str], omitted_full_tokens: int
@@ -482,13 +569,18 @@ class NodeAState:
         never moved, so the window can still end up over budget.  If stubs
         alone cannot fit, render_prompt drops the oldest cold stubs.
         """
-        while self.raw_window_tokens() > self.max_window_tokens:
+        # The rendered prompt, not the uncapped raw block list, is the budget.
+        # Once cold stubs are folded into archive_index, the rendered view can
+        # already fit; evicting more would just raise the page-fault rate.
+        while self.window_tokens() > self.max_window_tokens:
             candidates = [
                 entry
                 for entry in self.entries.values()
                 if entry.eviction_allowed
                 and not entry.pinned
                 and not entry.pinned_until_compaction
+                # A stub longer than the text would make the prompt bigger.
+                and count_tokens(entry.stub or "") < entry.full_tokens
             ]
             if not candidates:
                 break
@@ -497,22 +589,26 @@ class NodeAState:
             victim.residence = PAGED_TO_NODE_B
             logger.info("paged out %s v%s", victim.key, victim.version)
 
-        while self.spill_dirty and self.raw_window_tokens() > self.max_window_tokens:
-            candidates = [
-                entry
-                for entry in self.entries.values()
-                if entry.spill_allowed and not entry.pinned_until_compaction
-            ]
+        while self.spill_dirty and self.window_tokens() > self.max_window_tokens:
+            candidates: list[tuple[KeyEntry, str]] = []
+            for entry in self.entries.values():
+                if not entry.spill_allowed or entry.pinned_until_compaction:
+                    continue
+                spill_stub = build_stub(
+                    entry.key,
+                    entry.version,
+                    entry.full_text or "",
+                    entry.full_tokens,
+                    label="SPILLED",
+                )
+                if count_tokens(spill_stub) < entry.full_tokens:
+                    candidates.append((entry, spill_stub))
             if not candidates:
                 break
-            victim = min(candidates, key=lambda entry: entry.eviction_key)
-            victim.stub = build_stub(
-                victim.key,
-                victim.version,
-                victim.full_text or "",
-                victim.full_tokens,
-                label="SPILLED",
+            victim, spill_stub = min(
+                candidates, key=lambda item: item[0].eviction_key
             )
+            victim.stub = spill_stub
             victim.residence = SPILLED_LOCAL
             logger.info("spilled dirty %s v%s to local disk", victim.key, victim.version)
 
@@ -613,8 +709,9 @@ class NodeAState:
             if entry is None:
                 return None
             if touch:
+                # LRU order is a cache heuristic; do not fsync the whole state
+                # file on every read.  Mutations persist their own changes.
                 entry.last_access = time.time()
-                self._persist()
             return self._view(entry)
 
     async def hydrate(self, key: str, replicator: Replicator) -> dict[str, Any]:
@@ -624,7 +721,6 @@ class NodeAState:
                 raise KeyNotFound(key)
             if entry.residence == RESIDENT_FULL and entry.full_text is not None:
                 entry.last_access = time.time()
-                self._persist()
                 return {
                     "key": entry.key,
                     "version": entry.version,
@@ -721,14 +817,16 @@ class NodeAState:
             self.compact()
             self._persist()
 
-    @staticmethod
     def _apply_result(
-        entry: KeyEntry, version: int, result: ReplicationResult
+        self, entry: KeyEntry, version: int, result: ReplicationResult
     ) -> None:
         """Apply Node B's answer for ``version`` (caller checked it is current)."""
+        self.replication_attempts += 1
         if result.ok:
+            self.replication_successes += 1
             entry.stub = result.stub
             entry.acked_version = version
+            entry.acked_full_tokens = entry.full_tokens
             entry.consistency_status = SYNCED_ARCHIVED
             entry.replication_error = None
             if entry.residence == SPILLED_LOCAL:
@@ -736,6 +834,8 @@ class NodeAState:
                 entry.residence = PAGED_TO_NODE_B
                 entry.full_text = None
             return
+        self.replication_failures += 1
+        self.last_replication_error = result.error or "replication failed"
         entry.consistency_status = DIRTY_UNREPLICATED
         if (
             result.stale
@@ -805,7 +905,13 @@ class NodeAState:
     async def status(self, include_text: bool = True) -> dict[str, Any]:
         async with self._lock:
             keys: dict[str, Any] = {}
+            dirty = 0
+            pending = 0
             for entry in self.entries.values():
+                if entry.consistency_status == DIRTY_UNREPLICATED:
+                    dirty += 1
+                elif entry.consistency_status == PENDING_REPLICATION:
+                    pending += 1
                 prompt_view = None
                 if include_text:
                     prompt_view = (
@@ -819,16 +925,22 @@ class NodeAState:
                     "consistency_status": entry.consistency_status,
                     "active_tokens_in_node_a": entry.active_tokens,
                     "full_tokens_on_node_b": (
-                        entry.full_tokens if entry.acked_version > 0 else None
+                        entry.acked_full_tokens
+                        if entry.acked_version > 0
+                        else None
                     ),
                     "eviction_allowed": entry.eviction_allowed,
                     "replication_error": entry.replication_error,
                     "pinned": entry.pinned,
                     "priority": entry.priority,
+                    "acked_version": entry.acked_version,
                     "prompt_view": prompt_view,
                 }
             prompt, omitted, index_tokens = self.render_prompt()
             window = count_tokens(prompt)
+            consistent = (
+                dirty == 0 and pending == 0 and not self.tombstones
+            )
             return {
                 "active_window_tokens": window,
                 "max_window_tokens": self.max_window_tokens,
@@ -839,6 +951,11 @@ class NodeAState:
                 "pending_deletes": len(self.tombstones),
                 "omitted_from_prompt": omitted,
                 "index_tokens": index_tokens,
+                "consistency": "consistent" if consistent else "degraded",
+                "replication_attempts": self.replication_attempts,
+                "replication_successes": self.replication_successes,
+                "replication_failures": self.replication_failures,
+                "last_replication_error": self.last_replication_error,
                 "keys": keys,
             }
 
@@ -899,6 +1016,7 @@ class NodeAState:
             "residence": entry.residence,
             "active_tokens": entry.active_tokens,
             "full_tokens": entry.full_tokens,
+            "replication_error": entry.replication_error,
             "active_window_tokens": window,
             "over_budget": window > self.max_window_tokens,
         }

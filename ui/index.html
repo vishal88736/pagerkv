@@ -400,7 +400,7 @@ svg.chart{display:block; width:100%; height:220px}
       ]);
       $("dotLive").className = "dot ok"; $("liveTxt").textContent = "live · " + new Date().toLocaleTimeString();
       $("banner").style.display = "none";
-      const bUp = !!(h.body && h.body.node_b_reachable);
+      const bUp = !!(h.body && (h.body.node_b_ready ?? h.body.node_b_reachable));
       $("dotA").className = "dot ok"; $("pillA").textContent = "Online";
       faultLocked = f.status === 403;
       const prevMode = faultMode;

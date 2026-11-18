@@ -30,6 +30,11 @@ CREATE TABLE IF NOT EXISTS archive (
   sha256 TEXT NOT NULL,
   updated_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS tombstones (
+  key TEXT PRIMARY KEY,
+  deleted_through INTEGER NOT NULL,
+  updated_at REAL NOT NULL
+);
 """
 
 _FTS_AVAILABLE: bool | None = None
@@ -61,6 +66,8 @@ def _detect_fts(conn: sqlite3.Connection) -> bool:
 
 def init_db() -> None:
     with _connect() as conn:
+        # WAL keeps readers from blocking the single writer and survives restarts.
+        conn.execute("PRAGMA journal_mode = WAL")
         conn.execute(_SCHEMA)
         if _detect_fts(conn):
             conn.execute(
@@ -87,6 +94,21 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     return {key: row[key] for key in row.keys()}
 
 
+def _stale_row(key: str, version: int, reason: str) -> dict[str, Any]:
+    """A stale-write answer that has no live archive row behind it."""
+    return {
+        "key": key,
+        "version": version,
+        "full_text": "",
+        "full_tokens": 0,
+        "stub": "",
+        "sha256": "",
+        "updated_at": time.time(),
+        "stale_write": True,
+        "reason": reason,
+    }
+
+
 def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -105,11 +127,35 @@ def save(key: str, version: int, full_text: str) -> dict[str, Any]:
     with _write_lock:
         conn = _connect()
         try:
+            tombstone = conn.execute(
+                "SELECT deleted_through FROM tombstones WHERE key = ?", (key,)
+            ).fetchone()
+            if tombstone is not None and version <= tombstone["deleted_through"]:
+                # A delete settled before this (possibly delayed) replication
+                # arrived.  Refuse to resurrect the key.
+                return _stale_row(
+                    key,
+                    int(tombstone["deleted_through"]),
+                    reason="deleted",
+                )
+
             row = conn.execute(
                 "SELECT * FROM archive WHERE key = ?", (key,)
             ).fetchone()
 
             if row is not None and row["version"] > version:
+                result = _row_to_dict(row)
+                result["stale_write"] = True
+                return result
+
+            if row is not None and row["version"] == version:
+                if row["sha256"] == sha256:
+                    # Idempotent retry (e.g. Node A restarted while pending).
+                    result = _row_to_dict(row)
+                    result["stale_write"] = False
+                    return result
+                # Two different payloads claim the same version.  This is a
+                # conflict, not an overwrite: Node A will reconcile to v+1.
                 result = _row_to_dict(row)
                 result["stale_write"] = True
                 return result
@@ -166,9 +212,32 @@ def delete(key: str, max_version: int) -> dict[str, Any]:
             row = conn.execute(
                 "SELECT version FROM archive WHERE key = ?", (key,)
             ).fetchone()
+
+            # Record the delete even when the row is already gone.  A delayed
+            # replication for this version (or older) must never resurrect it.
+            existing = conn.execute(
+                "SELECT deleted_through FROM tombstones WHERE key = ?", (key,)
+            ).fetchone()
+            deleted_through = max(
+                max_version,
+                int(existing["deleted_through"]) if existing is not None else 0,
+            )
+            conn.execute(
+                """
+                INSERT INTO tombstones (key, deleted_through, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    deleted_through = excluded.deleted_through,
+                    updated_at      = excluded.updated_at
+                """,
+                (key, deleted_through, time.time()),
+            )
+
             if row is None:
+                conn.commit()
                 return {"key": key, "deleted": False, "version": None}
             if row["version"] > max_version:
+                conn.commit()
                 return {"key": key, "deleted": False, "version": row["version"]}
             conn.execute("DELETE FROM archive WHERE key = ?", (key,))
             if _FTS_AVAILABLE:
@@ -186,7 +255,14 @@ def stats() -> dict[str, int]:
         row = conn.execute(
             "SELECT COUNT(*) AS n, COALESCE(SUM(full_tokens), 0) AS t FROM archive"
         ).fetchone()
-        return {"keys": int(row["n"]), "tokens": int(row["t"])}
+        tombstones = conn.execute(
+            "SELECT COUNT(*) AS n FROM tombstones"
+        ).fetchone()
+        return {
+            "keys": int(row["n"]),
+            "tokens": int(row["t"]),
+            "tombstones": int(tombstones["n"]),
+        }
     finally:
         conn.close()
 
@@ -250,7 +326,16 @@ def search(q: str, limit: int = 5) -> list[dict[str, Any]]:
         scored: list[tuple[int, sqlite3.Row]] = []
         for row in rows:
             text = (row["full_text"] or "").lower()
-            hits = sum(1 for w in words if w.lower() in text) if words else 1
+            key_name = str(row["key"]).lower()
+            hits = (
+                sum(
+                    1
+                    for w in words
+                    if w.lower() in text or w.lower() in key_name
+                )
+                if words
+                else 1
+            )
             if hits > 0:
                 scored.append((hits, row))
         scored.sort(key=lambda item: (-item[0], item[1]["key"]))

@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import (
     FileResponse,
     JSONResponse,
@@ -21,13 +21,18 @@ from common import metrics
 from common.admin import TOKEN_HEADER, require_admin
 from common.schemas import (
     FaultRequest,
+    KvPutRequest,
+    KvPutResponse,
+    KvValueResponse,
     NodeAHealth,
     PolicyRequest,
     PromptResponse,
     PutRequest,
     PutResponse,
+    ReplicationStatusResponse,
     StatusResponse,
 )
+from common.validation import validate_key
 from node_a import config
 from node_a.replicator import Replicator, retry_loop
 from node_a.state import (
@@ -99,10 +104,25 @@ def _replicator(request: Request) -> Replicator:
     return request.app.state.replicator
 
 
+def _key_or_422(key: str) -> str:
+    try:
+        validate_key(key)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    return key
+
+
 @app.get("/health", response_model=NodeAHealth)
 async def health(request: Request) -> NodeAHealth:
-    reachable = await _replicator(request).health()
-    return NodeAHealth(ok=True, node="A", node_b_reachable=reachable)
+    replicator = _replicator(request)
+    reachable = await replicator.health()
+    ready = await replicator.ready() if reachable else False
+    return NodeAHealth(
+        ok=True,
+        node="A",
+        node_b_reachable=reachable,
+        node_b_ready=ready,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -148,8 +168,66 @@ async def prometheus_metrics(request: Request) -> str:
             ("pagerkv_a_keys_spilled", "gauge", "Dirty keys spilled to local disk.", count("residence", "SPILLED_LOCAL")),
             ("pagerkv_a_keys_dirty", "gauge", "Keys not yet acked by Node B.", count("consistency_status", "DIRTY_UNREPLICATED")),
             ("pagerkv_a_pending_deletes", "gauge", "Deletes not yet applied on Node B.", status["pending_deletes"]),
+            ("pagerkv_a_replication_attempts_total", "counter", "Node A -> Node B replication attempts.", status["replication_attempts"]),
+            ("pagerkv_a_replication_successes_total", "counter", "Replication attempts acknowledged by Node B.", status["replication_successes"]),
+            ("pagerkv_a_replication_failures_total", "counter", "Replication attempts that failed or were rejected.", status["replication_failures"]),
         ]
     )
+
+
+@app.get("/replication/status", response_model=ReplicationStatusResponse)
+async def replication_status(request: Request) -> dict:
+    """One aggregate answer to "is the key-value store consistent?"."""
+    status = await _state(request).status(include_text=False)
+    rows = list(status["keys"].values())
+    replicator = _replicator(request)
+    reachable = await replicator.health()
+    ready = await replicator.ready() if reachable else False
+    counts = {
+        "total": len(rows),
+        "synced": sum(
+            1 for row in rows if row["consistency_status"] == "SYNCED_ARCHIVED"
+        ),
+        "dirty": sum(
+            1 for row in rows if row["consistency_status"] == "DIRTY_UNREPLICATED"
+        ),
+        "pending": sum(
+            1 for row in rows if row["consistency_status"] == "PENDING_REPLICATION"
+        ),
+        "resident": sum(
+            1 for row in rows if row["residence"] == "RESIDENT_FULL"
+        ),
+        "paged": sum(
+            1 for row in rows if row["residence"] == "PAGED_TO_NODE_B"
+        ),
+        "spilled": sum(
+            1 for row in rows if row["residence"] == "SPILLED_LOCAL"
+        ),
+    }
+    consistent = (
+        ready
+        and counts["dirty"] == 0
+        and counts["pending"] == 0
+        and status["pending_deletes"] == 0
+    )
+    return {
+        "node": "A",
+        "node_b_url": config.NODE_B_URL,
+        "node_b_reachable": reachable,
+        "node_b_ready": ready,
+        "consistency": "consistent" if consistent else "degraded",
+        "keys": counts,
+        "replication": {
+            "attempts": status["replication_attempts"],
+            "succeeded": status["replication_successes"],
+            "failed": status["replication_failures"],
+            "last_error": status["last_replication_error"],
+        },
+        "pending_deletes": status["pending_deletes"],
+        "active_window_tokens": status["active_window_tokens"],
+        "max_window_tokens": status["max_window_tokens"],
+        "over_budget": status["over_budget"],
+    }
 
 
 async def _proxy_fault(request: Request, method: str, body: dict | None = None):
@@ -167,7 +245,11 @@ async def _proxy_fault(request: Request, method: str, body: dict | None = None):
         )
     except httpx.HTTPError:
         return JSONResponse(status_code=503, content={"error": "Node B unreachable"})
-    return JSONResponse(status_code=response.status_code, content=response.json())
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {"error": "Node B returned invalid JSON"}
+    return JSONResponse(status_code=response.status_code, content=payload)
 
 
 @app.get("/admin/node_b/fault", dependencies=[Depends(require_admin)])
@@ -178,6 +260,63 @@ async def get_node_b_fault(request: Request):
 @app.post("/admin/node_b/fault", dependencies=[Depends(require_admin)])
 async def set_node_b_fault(body: FaultRequest, request: Request):
     return await _proxy_fault(request, "POST", body.model_dump())
+
+
+# ---------------------------------------------------------------------------
+# Plain key-value facade for the assignment-style API.  It returns values, not
+# prompt stubs: a GET hydrates from the local spill or Node B when necessary.
+# ---------------------------------------------------------------------------
+
+
+@app.put("/kv/{key:path}", response_model=KvPutResponse)
+async def kv_put(key: str, body: KvPutRequest, request: Request) -> dict:
+    _key_or_422(key)
+    try:
+        summary = await _state(request).put(
+            key,
+            body.value,
+            _replicator(request),
+            pinned=body.pinned,
+            priority=body.priority,
+        )
+    except KeyNotFound:
+        raise HTTPException(status_code=404, detail=f"key {key!r} disappeared") from None
+    return {
+        "key": summary["key"],
+        "version": summary["version"],
+        "replicated": summary["consistency_status"] == "SYNCED_ARCHIVED",
+        "consistency_status": summary["consistency_status"],
+        "replication_error": summary.get("replication_error"),
+    }
+
+
+@app.get("/kv/{key:path}", response_model=KvValueResponse)
+async def kv_get(key: str, request: Request) -> dict:
+    _key_or_422(key)
+    try:
+        hydrated = await _state(request).hydrate(key, _replicator(request))
+    except KeyNotFound:
+        raise HTTPException(status_code=404, detail=f"no such key {key!r}") from None
+    except HydrateUnavailable as exc:
+        return JSONResponse(
+            status_code=503,
+            content={"error": exc.error, "stub": exc.stub},
+        )
+    except HydrateVersionMismatch as exc:
+        return JSONResponse(status_code=409, content={"error": str(exc)})
+    return {
+        "key": hydrated["key"],
+        "version": hydrated["version"],
+        "value": hydrated["full_text"],
+        "source": hydrated["source"],
+    }
+
+
+@app.delete("/kv/{key:path}", status_code=204)
+async def kv_delete(key: str, request: Request) -> Response:
+    _key_or_422(key)
+    await _state(request).delete(key, _replicator(request))
+    return Response(status_code=204)
 
 
 # ---------------------------------------------------------------------------
@@ -198,7 +337,9 @@ async def context_prompt(request: Request) -> dict:
 
 @app.get("/context/search", response_model=None)
 async def context_search(
-    request: Request, q: str = "", limit: int = 5
+    request: Request,
+    q: str = "",
+    limit: int = Query(default=5, ge=1, le=50),
 ) -> dict | JSONResponse:
     state = _state(request)
     replicator = _replicator(request)
@@ -228,6 +369,7 @@ async def context_search(
 
 @app.put("/context/{key:path}", response_model=PutResponse)
 async def put_context(key: str, body: PutRequest, request: Request) -> dict:
+    _key_or_422(key)
     if key in RESERVED_KEYS:
         raise HTTPException(
             status_code=422,
@@ -250,6 +392,7 @@ async def get_context(
     key: str, request: Request, hydrate: bool = False, peek: bool = False
 ):
     """``peek=true`` reads without counting as an access (dashboards, tools)."""
+    _key_or_422(key)
     state = _state(request)
     if not hydrate:
         view = await state.get_view(key, touch=not peek)
@@ -276,6 +419,7 @@ async def get_context(
 @app.patch("/context/{key:path}", response_model=PutResponse)
 async def patch_context(key: str, body: PolicyRequest, request: Request) -> dict:
     """Pin / unpin a key or change its eviction priority."""
+    _key_or_422(key)
     try:
         return await _state(request).set_policy(key, body.pinned, body.priority)
     except KeyNotFound:
@@ -285,5 +429,6 @@ async def patch_context(key: str, body: PolicyRequest, request: Request) -> dict
 @app.delete("/context/{key:path}", status_code=204)
 async def delete_context(key: str, request: Request) -> Response:
     """Delete locally; Node B's copy is deleted now or by the retry loop."""
+    _key_or_422(key)
     await _state(request).delete(key, _replicator(request))
     return Response(status_code=204)

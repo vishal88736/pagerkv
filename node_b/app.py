@@ -25,6 +25,7 @@ from common.schemas import (
     ReplicateRequest,
     ReplicateResponse,
 )
+from common.validation import validate_key
 from node_b import archive
 
 logger = logging.getLogger("pagerkv.node_b")
@@ -46,6 +47,14 @@ async def fault_guard() -> None:
             await asyncio.sleep(delay)
 
 
+def _key_or_422(key: str) -> str:
+    try:
+        validate_key(key)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    return key
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     archive.init_db()
@@ -62,17 +71,36 @@ app = FastAPI(
 
 @app.get("/health")
 async def health() -> dict[str, object]:
-    return {"ok": True, "node": "B"}
+    mode = FAULT["mode"]
+    return {
+        "ok": True,
+        "node": "B",
+        "fault_mode": mode,
+        # ``health`` stays up so the fault switch can be turned back off;
+        # ``ready`` is the data-plane signal used for consistency reporting.
+        "ready": mode != "down",
+    }
+
+
+@app.get("/ready")
+async def ready() -> dict[str, object]:
+    mode = FAULT["mode"]
+    if mode == "down":
+        raise HTTPException(
+            status_code=503, detail="Node B is down (fault injection)"
+        )
+    return {"ok": True, "node": "B", "fault_mode": mode}
 
 
 @app.get("/metrics", response_class=PlainTextResponse)
-async def prometheus_metrics() -> str:
+def prometheus_metrics() -> str:
     stats = archive.stats()
     mode = FAULT["mode"]
     return metrics.render(
         [
             ("pagerkv_b_archived_keys", "gauge", "Keys held in the archive.", stats["keys"]),
             ("pagerkv_b_archived_tokens", "gauge", "Full-text tokens archived.", stats["tokens"]),
+            ("pagerkv_b_tombstones", "gauge", "Delete watermarks held by Node B.", stats["tombstones"]),
             ("pagerkv_b_fault_down", "gauge", "1 when fault mode is down.", mode == "down"),
             ("pagerkv_b_fault_slow", "gauge", "1 when fault mode is slow.", mode == "slow"),
         ]
@@ -105,7 +133,7 @@ async def set_fault(request: FaultRequest) -> FaultResponse:
     response_model=ReplicateResponse,
     dependencies=[Depends(fault_guard)],
 )
-async def replicate(request: ReplicateRequest) -> ReplicateResponse:
+def replicate(request: ReplicateRequest) -> ReplicateResponse:
     row = archive.save(request.key, request.version, request.full_text)
     return ReplicateResponse(
         key=row["key"],
@@ -121,7 +149,7 @@ async def replicate(request: ReplicateRequest) -> ReplicateResponse:
     "/search",
     dependencies=[Depends(fault_guard)],
 )
-async def search(q: str = Query(default=""), limit: int = Query(default=5, ge=1, le=50)):
+def search(q: str = Query(default=""), limit: int = Query(default=5, ge=1, le=50)):
     return {"results": archive.search(q, limit)}
 
 
@@ -130,8 +158,8 @@ async def search(q: str = Query(default=""), limit: int = Query(default=5, ge=1,
     response_model=ArchiveResponse,
     dependencies=[Depends(fault_guard)],
 )
-async def get_archive(key: str) -> ArchiveResponse:
-    row = archive.get(key)
+def get_archive(key: str) -> ArchiveResponse:
+    row = archive.get(_key_or_422(key))
     if row is None:
         raise HTTPException(status_code=404, detail=f"no archived key {key!r}")
     return ArchiveResponse(
@@ -148,6 +176,6 @@ async def get_archive(key: str) -> ArchiveResponse:
     "/archive/{key:path}",
     dependencies=[Depends(fault_guard)],
 )
-async def delete_archive(key: str, version: int = Query(ge=0)) -> dict[str, object]:
+def delete_archive(key: str, version: int = Query(ge=0)) -> dict[str, object]:
     """Delete ``key`` if its archived version is <= ``version`` (idempotent)."""
-    return archive.delete(key, version)
+    return archive.delete(_key_or_422(key), version)

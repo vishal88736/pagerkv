@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from common.validation import MAX_KEY_CHARS, MAX_TEXT_CHARS, validate_key
 
 FaultMode = Literal["none", "down", "slow"]
 
@@ -15,9 +17,15 @@ FaultMode = Literal["none", "down", "slow"]
 
 
 class ReplicateRequest(BaseModel):
-    key: str = Field(min_length=1)
+    key: str = Field(min_length=1, max_length=MAX_KEY_CHARS)
     version: int = Field(ge=1)
-    full_text: str
+    full_text: str = Field(max_length=MAX_TEXT_CHARS)
+
+    @field_validator("key")
+    @classmethod
+    def _valid_key(cls, value: str) -> str:
+        validate_key(value)
+        return value
 
 
 class ReplicateResponse(BaseModel):
@@ -59,10 +67,33 @@ class NodeBHealth(BaseModel):
 
 
 class PutRequest(BaseModel):
-    text: str
+    text: str = Field(max_length=MAX_TEXT_CHARS)
     # Optional eviction policy; omitted fields keep the key's current setting.
     pinned: bool | None = None
     priority: int | None = Field(default=None, ge=-100, le=100)
+
+
+class KvPutRequest(BaseModel):
+    """Body for the plain key-value facade (``PUT /kv/{key}``)."""
+
+    value: str = Field(max_length=MAX_TEXT_CHARS)
+    pinned: bool | None = None
+    priority: int | None = Field(default=None, ge=-100, le=100)
+
+
+class KvPutResponse(BaseModel):
+    key: str
+    version: int
+    replicated: bool
+    consistency_status: str
+    replication_error: str | None = None
+
+
+class KvValueResponse(BaseModel):
+    key: str
+    version: int
+    value: str
+    source: Literal["L1", "L1_SPILL", "L2_PAGE_FAULT"]
 
 
 class PolicyRequest(BaseModel):
@@ -112,6 +143,7 @@ class KeyStatus(BaseModel):
     replication_error: str | None
     pinned: bool = False
     priority: int = 0
+    acked_version: int = 0
     # None when /context/status is called with include_text=false.
     prompt_view: str | None
 
@@ -126,7 +158,43 @@ class StatusResponse(BaseModel):
     pending_deletes: int = 0
     omitted_from_prompt: int = 0
     index_tokens: int = 0
+    consistency: Literal["consistent", "degraded"] = "consistent"
+    replication_attempts: int = 0
+    replication_successes: int = 0
+    replication_failures: int = 0
+    last_replication_error: str | None = None
     keys: dict[str, KeyStatus]
+
+
+class KeyCounts(BaseModel):
+    total: int
+    synced: int
+    dirty: int
+    pending: int
+    resident: int
+    paged: int
+    spilled: int
+
+
+class ReplicationCounts(BaseModel):
+    attempts: int
+    succeeded: int
+    failed: int
+    last_error: str | None = None
+
+
+class ReplicationStatusResponse(BaseModel):
+    node: Literal["A"]
+    node_b_url: str
+    node_b_reachable: bool
+    node_b_ready: bool
+    consistency: Literal["consistent", "degraded"]
+    keys: KeyCounts
+    replication: ReplicationCounts
+    pending_deletes: int
+    active_window_tokens: int
+    max_window_tokens: int
+    over_budget: bool
 
 
 class PromptResponse(BaseModel):
@@ -138,3 +206,4 @@ class NodeAHealth(BaseModel):
     ok: bool
     node: Literal["A"]
     node_b_reachable: bool
+    node_b_ready: bool = False

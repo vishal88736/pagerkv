@@ -213,6 +213,23 @@ class Replicator:
             return False
         return bool(isinstance(payload, dict) and payload.get("ok") is True)
 
+    async def ready(self) -> bool:
+        """Data-plane readiness: false while Node B fault mode is ``down``."""
+        try:
+            response = await self.client.get(
+                f"{self.base_url}/ready",
+                timeout=min(1.0, self.timeout_s),
+            )
+        except Exception:
+            return False
+        if response.status_code != 200:
+            return False
+        try:
+            payload = response.json()
+        except ValueError:
+            return False
+        return bool(isinstance(payload, dict) and payload.get("ok") is True)
+
 
 async def retry_loop(
     state: NodeAState, replicator: Replicator, interval_s: float
