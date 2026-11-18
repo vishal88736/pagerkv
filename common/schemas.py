@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -155,6 +155,7 @@ class KeyStatus(BaseModel):
 
 
 class StatusResponse(BaseModel):
+    last_replication: dict[str, Any] | None = None
     local_value_count: int = 0
     active_window_tokens: int
     max_window_tokens: int
@@ -191,6 +192,7 @@ class ReplicationCounts(BaseModel):
 
 
 class ReplicationStatusResponse(BaseModel):
+    last_replication: dict[str, Any] | None = None
     comparison_status: Literal["in_sync", "pending", "diverged", "unknown"] = "unknown"
     comparison_basis: str = "Live key, version and full-value comparison"
     differing_keys: list[str] = Field(default_factory=list)

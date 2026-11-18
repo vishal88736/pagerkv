@@ -1,44 +1,6 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const vm = require('node:vm');
-const path = require('node:path');
-
-function dashboard() {
-  let source = fs.readFileSync(path.join(__dirname, '../ui/index.html'), 'utf8').match(/<script>([\s\S]*?)<\/script>/)[1];
-  class Element {
-    constructor(id = '',tag = '') {
-      this.id=id;this.tag=tag;this.children=[];this.attributes={};this.style={};this.dataset={};this.value='';this.textContent='';this.className='';this.hidden=false;this.disabled=false;this.offsetWidth=300;
-      this.parentElement={clientWidth:400};
-      this.classList={contains:name=>this.className.split(' ').includes(name),add(){},remove(){},toggle(){}};
-    }
-    set innerHTML(value){this.html=value;this.children=[];}
-    get innerHTML(){return this.html || '';}
-    addEventListener(){}
-    setAttribute(key,value){this.attributes[key]=String(value);}
-    appendChild(child){this.children.push(child);return child;}
-    getBoundingClientRect(){return {width:900,height:640};}
-    animate(frames,options){this.animation={frames,options};return {cancel(){}};}
-  }
-  const elements=new Map();
-  const element=id=>{if(!elements.has(id))elements.set(id,new Element(id));return elements.get(id);};
-  const context={
-    document:{getElementById:element,createElementNS:(_ns,tag)=>new Element('',tag),querySelectorAll:()=>[],activeElement:null},
-    fetch:async()=>{throw Error('offline')},AbortSignal,console,localStorage:{getItem:()=>'',setItem(){}},
-    setInterval(){},clearInterval(){},setTimeout(){},clearTimeout(){},addEventListener(){},
-    location:{hash:''},getComputedStyle:()=>({position:'relative'}),matchMedia:()=>({matches:false}),
-    innerWidth:1400,innerHeight:1000,confirm:()=>true,prompt:()=>'',
-  };
-  const bootstrap='  poll(); loadPrompt();\n  setInterval(poll, POLL_MS);';
-  assert.ok(source.includes(bootstrap));
-  source=source.replace(bootstrap,'  globalThis.check = { transfer, observeReplication, poll, render, renderTable, api, setStatus(value){status=value;}, setSelected(value){selected=value;} };\n  setInterval(poll, POLL_MS);');
-  vm.createContext(context);vm.runInContext(source,context);
-  return {context,element,check:context.check};
-}
-function state(key='observation') {
-  return {keys:{[key]:{version:1,acked_version:1,residence:'RESIDENT_FULL',consistency_status:'SYNCED_ARCHIVED',active_tokens_in_node_a:200,full_tokens_on_node_b:200,eviction_allowed:true,pinned:false,priority:0}},active_window_tokens:210,max_window_tokens:2000,over_budget:false,page_faults:0,tokens_saved_by_replication:0,replication_successes:1,replication_failures:0,pending_deletes:0,local_value_count:1};
-}
-function descendants(element) {return element.children.flatMap(child=>[child,...descendants(child)]);}
+const {dashboard, state, descendants} = require('./dashboard-harness.cjs');
 
 test('acknowledged resident blocks appear on both isometric node floors',()=>{
   const {check,element}=dashboard();check.setStatus(state());check.render();
@@ -100,4 +62,69 @@ test('the full local value action uses the REST key API independently of hydrati
   context.fetch=async url=>{requested=url;return {ok:true,status:200,json:async()=>({value:'complete original'})};};
   await element('btnValue').onclick();
   assert.equal(requested,'/key/obs%2Fkey');assert.equal(element('detailOut').textContent,'complete original');
+});
+
+
+test('local HTTP acceptance and failed replica HTTP response remain separate evidence',async()=>{
+  const {check,element,context}=dashboard();
+  context.fetch=async()=>({ok:true,status:200,json:async()=>({version:2,replicated:false})});
+  await check.writeValue('city','Raipur');
+  check.renderReplicationResult({key:'city',version:2,method:'POST',path:'/replicate',http_status:503,elapsed_ms:12.7,ok:false,error:'Node B HTTP 503',source:'write',attempt:4});
+  assert.match(element('requestRoute').textContent,/PUT \/key/);
+  assert.match(element('requestBody').textContent,/Raipur/);
+  assert.match(element('requestOutcome').textContent,/Node A: HTTP 200/);
+  assert.equal(element('resultHttp').textContent,'HTTP 503');
+  assert.equal(element('resultDuration').textContent,'12.7 ms');
+  assert.match(element('resultReason').textContent,/503/);
+});
+
+test('replication and context badges show independent facts for the same matching copies',()=>{
+  const {check,element}=dashboard();
+  check.renderCopyPair({key:'obs_01',node_a:{version:3,acked_version:3,value:'complete text',residence:'PAGED_TO_NODE_B'},node_b:{version:3,value:'complete text'},comparison_status:'in_sync',node_b_state:'available'});
+  assert.equal(element('pairComparison').textContent,'Replication: in sync');
+  assert.equal(element('pairContext').textContent,'Context: paged stub');
+  assert.equal(element('pairAVersion').textContent,'obs_01 · v3');
+  assert.equal(element('pairBVersion').textContent,'obs_01 · v3');
+  assert.equal(element('pairAValue').textContent,element('pairBValue').textContent);
+});
+
+test('an unavailable replica displays unknown alongside the pending update',()=>{
+  const {check,element}=dashboard();
+  check.renderCopyPair({key:'city',node_a:{version:2,acked_version:1,value:'Raipur',residence:'RESIDENT_FULL'},node_b:null,comparison_status:'unknown',node_b_state:'unavailable'});
+  assert.equal(element('pairComparison').textContent,'Replication: unknown · 1 pending update');
+  assert.match(element('pairBVersion').textContent,/unavailable/);
+  assert.equal(element('pairAValue').textContent,'Raipur');
+});
+
+test('selected node labels use the actually observed replica version',async()=>{
+  const {check,element,context}=dashboard();
+  check.setStatus(state());check.setSelected('observation');
+  context.fetch=async()=>({ok:true,status:200,json:async()=>({key:'observation',node_a:{version:1,acked_version:1,value:'primary',residence:'RESIDENT_FULL'},node_b:{version:9,value:'external'},comparison_status:'diverged',node_b_state:'available'})});
+  await check.loadCopyPair();
+  const labels=descendants(element('iso')).filter(node=>node.attributes.class==='block-label').map(node=>node.textContent);
+  assert.ok(labels.includes('observation · v1'));
+  assert.ok(labels.includes('observation · v9'));
+});
+
+test('guided demo refuses an existing failure mode without writing or changing it',async()=>{
+  const {check,element,context}=dashboard();const calls=[];
+  context.fetch=async(url,options)=>{calls.push([url,options.method]);return {ok:true,status:200,json:async()=>({mode:'down'})};};
+  await check.demoNext();
+  assert.match(element('demoProof').textContent,/Set Node B Online/);
+  assert.equal(check.getDemo(),null);
+  assert.equal(calls.length,1);
+  assert.equal(calls[0][1],undefined);
+});
+
+test('guided demo does not advance when a write fails',async()=>{
+  const {check,element,context}=dashboard();
+  context.fetch=async url=>url==='/admin/node_b/fault'
+    ? {ok:true,status:200,json:async()=>({mode:'none'})}
+    : url.startsWith('/context/status')
+      ? {ok:true,status:200,json:async()=>({max_window_tokens:2000})}
+      : {ok:false,status:500,json:async()=>({error:'failed'})};
+  await check.demoNext();
+  assert.equal(check.getDemo().step,0);
+  assert.match(element('demoProof').textContent,/Initial write: HTTP 500/);
+  assert.equal(element('btnDemoNext').disabled,false);
 });

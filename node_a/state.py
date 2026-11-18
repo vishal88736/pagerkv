@@ -173,6 +173,7 @@ class NodeAState:
         self.tombstones: dict[str, int] = {}
         self.page_faults = 0
         self.over_budget = False
+        self.last_replication: dict[str, Any] | None = None
         self.replication_attempts = 0
         self.replication_successes = 0
         self.replication_failures = 0
@@ -199,6 +200,7 @@ class NodeAState:
             os.makedirs(directory, exist_ok=True)
             tmp_path = f"{self.state_file}.tmp"
             payload = {
+                "last_replication": self.last_replication,
                 "full_values": self.full_values,
                 "page_faults": self.page_faults,
                 "replication_attempts": self.replication_attempts,
@@ -268,6 +270,8 @@ class NodeAState:
                 if isinstance(key, str) and isinstance(version, int):
                     self.tombstones[key] = version
 
+        last_result = payload.get("last_replication")
+        self.last_replication = last_result if isinstance(last_result, dict) else None
         values = payload.get("full_values", {})
         if isinstance(values, dict):
             self.full_values = {
@@ -876,7 +880,7 @@ class NodeAState:
                 entry = self.entries.get(key)
                 if entry is None or entry.version != version:
                     continue
-                self._apply_result(entry, version, result)
+                self._apply_result(entry, version, result, source="background_retry")
 
         async with self._lock:
             tombstones = list(self.tombstones.items())
@@ -887,9 +891,24 @@ class NodeAState:
             self.compact()
             self._persist()
 
-    def _apply_result(self, entry: KeyEntry, version: int, result: ReplicationResult) -> None:
+    def _apply_result(
+        self, entry: KeyEntry, version: int, result: ReplicationResult, source: str = "write"
+    ) -> None:
         """Apply Node B's answer for ``version`` (caller checked it is current)."""
         self.replication_attempts += 1
+        self.last_replication = {
+            "attempt": self.replication_attempts,
+            "key": entry.key,
+            "version": version,
+            "method": "POST",
+            "path": "/replicate",
+            "http_status": result.http_status,
+            "elapsed_ms": result.elapsed_ms,
+            "ok": result.ok,
+            "error": result.error,
+            "source": source,
+            "received_at": time.time(),
+        }
         if result.ok:
             self.replication_successes += 1
             entry.stub = result.stub
@@ -1001,6 +1020,7 @@ class NodeAState:
             window = count_tokens(prompt)
             consistent = dirty == 0 and pending == 0 and not self.tombstones
             return {
+                "last_replication": self.last_replication,
                 "local_value_count": len(self.full_values),
                 "active_window_tokens": window,
                 "max_window_tokens": self.max_window_tokens,

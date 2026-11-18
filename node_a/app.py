@@ -301,6 +301,7 @@ async def replication_status(request: Request) -> dict:
         )
     consistent = comparison == "in_sync"
     return {
+        "last_replication": status["last_replication"],
         "comparison_status": comparison,
         "differing_keys": differing,
         "local_value_count": len(state.full_values),
@@ -321,6 +322,62 @@ async def replication_status(request: Request) -> dict:
         "max_window_tokens": status["max_window_tokens"],
         "over_budget": status["over_budget"],
     }
+
+
+@app.get("/replication/key/{key:path}")
+async def inspect_replicated_key(key: str, request: Request) -> dict:
+    """Compare one real full-value copy without hydrating or modifying context."""
+    _key_or_422(key)
+    state = _state(request)
+    async with state._lock:
+        entry = state.entries.get(key)
+        local = (
+            None
+            if entry is None
+            else {
+                "key": key,
+                "version": entry.version,
+                "value": state.full_values.get(key),
+                "residence": entry.residence,
+                "acked_version": entry.acked_version,
+                "consistency_status": entry.consistency_status,
+            }
+        )
+        fetched = await _replicator(request).fetch(key)
+        remote = (
+            {"key": key, "version": fetched.version, "value": fetched.full_text}
+            if fetched.ok
+            else None
+        )
+        unavailable = not fetched.ok and not fetched.not_found
+        pending = entry is not None and entry.acked_version != entry.version
+        matches = (
+            local is not None
+            and remote is not None
+            and local["value"] == remote["value"]
+            and local["version"] == remote["version"]
+        )
+        comparison = (
+            "unknown"
+            if unavailable or (local is not None and local["value"] is None)
+            else "pending"
+            if pending
+            else "in_sync"
+            if matches or (local is None and remote is None)
+            else "diverged"
+        )
+        return {
+            "key": key,
+            "node_a": local,
+            "node_b": remote,
+            "node_b_state": "available"
+            if fetched.ok
+            else "missing"
+            if fetched.not_found
+            else "unavailable",
+            "comparison_status": comparison,
+            "error": fetched.error if unavailable else None,
+        }
 
 
 async def _proxy_fault(request: Request, method: str, body: dict | None = None):

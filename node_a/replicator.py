@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
@@ -25,6 +26,8 @@ logger = logging.getLogger("pagerkv.node_a.replicator")
 @dataclass
 class ReplicationResult:
     ok: bool
+    http_status: int | None = None
+    elapsed_ms: float | None = None
     version: int | None = None
     stub: str | None = None
     full_tokens: int | None = None
@@ -60,6 +63,12 @@ class Replicator:
         self.timeout_s = timeout_s
 
     async def replicate(self, key: str, version: int, text: str) -> ReplicationResult:
+        started = time.perf_counter()
+        result = await self._replicate(key, version, text)
+        result.elapsed_ms = round((time.perf_counter() - started) * 1000, 3)
+        return result
+
+    async def _replicate(self, key: str, version: int, text: str) -> ReplicationResult:
         try:
             response = await self.client.post(
                 f"{self.base_url}/replicate",
@@ -73,19 +82,22 @@ class Replicator:
         except Exception as exc:  # pragma: no cover - defensive
             return ReplicationResult(ok=False, error=f"replication failed: {exc}")
 
+        def answered(**data: Any) -> ReplicationResult:
+            return ReplicationResult(http_status=response.status_code, **data)
+
         if response.status_code != 200:
-            return ReplicationResult(ok=False, error=f"Node B HTTP {response.status_code}")
+            return answered(ok=False, error=f"Node B HTTP {response.status_code}")
 
         try:
             payload = response.json()
         except ValueError:
-            return ReplicationResult(ok=False, error="Node B returned invalid JSON")
+            return answered(ok=False, error="Node B returned invalid JSON")
 
         if not isinstance(payload, dict):
-            return ReplicationResult(ok=False, error="Node B returned bad payload")
+            return answered(ok=False, error="Node B returned bad payload")
         if payload.get("stale_write"):
             remote = payload.get("version")
-            return ReplicationResult(
+            return answered(
                 ok=False,
                 error=f"Node B rejected write as stale (it holds v{remote})",
                 stale=True,
@@ -95,16 +107,14 @@ class Replicator:
             payload.get("key") != key
             or payload.get("sha256") != hashlib.sha256(text.encode("utf-8")).hexdigest()
         ):
-            return ReplicationResult(
-                ok=False, error="Node B acknowledgment key or value digest mismatch"
-            )
+            return answered(ok=False, error="Node B acknowledgment key or value digest mismatch")
         if payload.get("version") != version:
-            return ReplicationResult(ok=False, error="Node B ack version mismatch")
+            return answered(ok=False, error="Node B ack version mismatch")
         stub = payload.get("stub")
         if not isinstance(stub, str) or not stub:
-            return ReplicationResult(ok=False, error="Node B ack missing stub")
+            return answered(ok=False, error="Node B ack missing stub")
 
-        return ReplicationResult(
+        return answered(
             ok=True,
             version=version,
             stub=stub,

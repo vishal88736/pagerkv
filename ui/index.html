@@ -214,6 +214,18 @@ svg.chart{display:block; width:100%; height:220px}
   .big{font-size:34px}
   .banner{margin:12px 16px 0}
 }
+
+/* Assignment evidence: REST requests, actual copies, and a guided flow. */
+.app-intro{margin:18px 28px 0;color:var(--muted);font-size:13px;line-height:1.7}
+.demo-panel{margin:18px 28px 0;padding:18px 22px;background:var(--panel);border:1px solid var(--line2)}
+.demo-heading{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}.demo-heading h2{font-size:16px;font-weight:500;margin:0}.demo-actions{display:flex;gap:8px;flex-wrap:wrap}
+.demo-steps{display:flex;gap:8px;flex-wrap:wrap;list-style:none;padding:0;margin:16px 0 10px;font-size:12px;color:var(--muted)}.demo-steps li{border:1px solid var(--line);padding:7px 10px}.demo-steps span{margin-right:7px;color:var(--dim)}.demo-steps .complete{color:var(--ok);border-color:rgba(61,220,151,.3)}.demo-steps .current{color:var(--c1);border-color:var(--c2)}
+.demo-proof{font-size:13px;color:var(--text);line-height:1.65;margin:8px 0}.demo-note{font-size:12px;color:var(--muted);line-height:1.6;margin:6px 0 0}.node-role{display:block;font-family:var(--sans);font-size:11px;color:var(--muted);max-width:215px;margin-top:5px}.transfer-node b{font-weight:500}
+.phase-row{display:flex;gap:7px;flex-wrap:wrap;margin:14px 0}.phase{font-size:11px;padding:5px 8px;border:1px solid var(--line);color:var(--dim)}.phase[data-phase="done"]{color:var(--ok);border-color:rgba(61,220,151,.3)}.phase[data-phase="active"]{color:var(--c1);border-color:var(--c2)}.phase[data-phase="failed"]{color:var(--bad);border-color:rgba(255,107,107,.4)}.phase[data-phase="context"]{color:var(--spill);border-color:rgba(159,140,255,.35)}
+.evidence-grid,.pair-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:16px}.evidence-grid>div,.pair-card{min-width:0;border-top:1px solid var(--line);padding-top:14px}.evidence-grid h3,.pair-heading{font-size:13px;font-weight:500;margin:0 0 8px}.request-route{color:var(--c1);font-family:var(--mono);font-size:13px}.request-body{margin:8px 0;padding:10px;background:rgba(0,0,0,.22);max-height:105px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px;font-family:var(--mono)}.request-outcome,.result-when{font-size:11px;color:var(--muted)}.result-meta{display:grid;grid-template-columns:1fr 1fr;gap:7px 16px;font-size:12px}.result-meta span{color:var(--muted)}.result-meta b{font-weight:500;overflow-wrap:anywhere}.result-reason{font-size:12px;color:var(--muted);line-height:1.6;margin:10px 0}.ok-text{color:var(--ok)}.bad-text{color:var(--bad)}
+.pair-head{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;align-items:center;margin-top:18px}.pair-head strong{font-family:var(--mono);color:var(--c1);overflow-wrap:anywhere}.pair-badge{padding:3px 8px;border:1px solid var(--line2);border-radius:4px}.pair-context{color:var(--spill)}.pair-title{font-family:var(--mono);font-size:12px;overflow-wrap:anywhere}.pair-value{font-family:var(--mono);font-size:11px;color:var(--muted);white-space:pre-wrap;overflow-wrap:anywhere;max-height:90px;overflow:auto;margin:8px 0 0}.copy-pair[hidden]{display:none}.block-label{font-family:var(--mono);font-size:10px;fill:#edf7ff;paint-order:stroke;stroke:#080e14;stroke-width:3px;pointer-events:none}
+@media(max-width:760px){.evidence-grid,.pair-grid{grid-template-columns:1fr}.demo-panel{margin:16px 16px 0;padding:16px}.app-intro{margin:16px 16px 0}.result-meta{gap:7px}.demo-actions .btn{white-space:normal}}
+
 </style>
 </head>
 <body>
@@ -247,12 +259,28 @@ svg.chart{display:block; width:100%; height:220px}
   <div class="live"><span class="dot" id="dotLive"></span><span id="liveTxt">polling</span></div>
 </header>
 
+<p class="app-intro"><strong>REST replicated key-value store.</strong> A accepts writes and stores complete values; B receives full replicas. The context layer decides which acknowledged blocks stay full in the active prompt.</p>
 <div class="banner" id="banner"></div>
+<section class="demo-panel" aria-label="Guided replication demonstration">
+  <div class="demo-heading"><h2>Show the problem statement in five steps</h2><div class="demo-actions"><button class="btn" id="btnDemoNext">Start guided demo</button><button class="btn ghost" id="btnDemoReset" disabled>Reset &amp; remove sample keys</button></div></div>
+  <ol class="demo-steps" id="demoSteps"></ol>
+  <p class="demo-proof" id="demoProof" role="status" aria-live="polite">First prove a REST write is copied. Then demonstrate failure, local availability, recovery, and finally context paging.</p>
+  <p class="demo-note">Uses real HTTP requests and unique demo-prefixed keys. The failure step temporarily takes B down for all writes; recovery or reset restores it. Reset removes only this demo’s generated keys.</p>
+</section>
 
 <section class="transfer" id="transfer" data-state="idle" aria-label="Replication activity">
   <div class="transfer-head"><strong>Context replication · A → B · hydrate B → A</strong><span id="transferCounts">Waiting for node status…</span></div>
-  <div class="transfer-track"><div class="transfer-node">Node A · original</div><div class="transfer-wire"><div class="transfer-packet" id="transferPacket"></div></div><div class="transfer-node">Node B · copy</div></div>
+  <div class="transfer-track"><div class="transfer-node"><b>Node A · primary</b><small class="node-role">Accepts REST writes · retains full values · builds active context</small></div><div class="transfer-wire"><div class="transfer-packet" id="transferPacket"></div></div><div class="transfer-node"><b>Node B · replica</b><small class="node-role">Receives HTTP replication · stores full copies · acknowledges versions</small></div></div>
   <div class="transfer-detail" id="transferDetail" role="status" aria-live="polite">Write a context block to see it copied. Paging changes the active prompt, not the durable primary value. Animations illustrate observed requests and acknowledgments.</div>
+  <div class="phase-row" aria-label="Write and replication phases"><span class="phase" id="phaseRequest">1 · REST request</span><span class="phase" id="phaseLocal">2 · saved on A</span><span class="phase" id="phaseCopy">3 · HTTP copy A → B</span><span class="phase" id="phaseAck">4 · B acknowledgment</span><span class="phase" id="phaseContext">5 · context: separate view</span></div>
+  <div class="evidence-grid">
+    <div><h3>Client request → Node A</h3><div class="request-route" id="requestRoute">No request yet</div><pre class="request-body" id="requestBody">Write a key or start the guided demo to see the actual HTTP method, endpoint and body.</pre><div class="request-outcome" id="requestOutcome">A local HTTP 200 and a successful replica acknowledgment are separate results.</div></div>
+    <div><h3>Last measured replication result → Node B</h3><div class="result-meta"><span>Key / version</span><b id="resultKey">—</b><span>HTTP call</span><b id="resultRoute">POST /replicate</b><span>B response</span><b id="resultHttp">—</b><span>Duration</span><b id="resultDuration">—</b><span>Trigger</span><b id="resultSource">—</b></div><p class="result-reason" id="resultReason">Awaiting a write replication attempt.</p><div class="result-when" id="resultWhen"></div></div>
+  </div>
+  <div class="copy-pair" id="copyPair" hidden>
+    <div class="pair-head"><strong id="pairKey"></strong><span class="pair-badge" id="pairComparison">Replication: checking</span><span class="pair-badge pair-context" id="pairContext">Context: checking</span></div>
+    <div class="pair-grid"><div class="pair-card"><h3 class="pair-heading">Node A · complete local value</h3><div class="pair-title" id="pairAVersion">—</div><pre class="pair-value" id="pairAValue"></pre></div><div class="pair-card"><h3 class="pair-heading">Node B · current full replica</h3><div class="pair-title" id="pairBVersion">—</div><pre class="pair-value" id="pairBValue"></pre></div></div>
+  </div>
 </section>
 
 <p class="context-note">Node A keeps complete values in its durable local store and a bounded active context above. Node B holds acknowledged full copies below. A short block on A is a context stub; paging happens only after replication succeeds. <span id="backingCount"></span></p>
@@ -334,7 +362,7 @@ svg.chart{display:block; width:100%; height:220px}
     <h3>Context Keys <span class="sub" id="keyCount"></span></h3>
     <div class="tbl-wrap">
       <table>
-        <thead><tr><th>Key</th><th>Ver</th><th>Residence</th><th>Consistency</th><th>L1 tok</th><th>Full tok</th><th>Policy</th><th></th></tr></thead>
+        <thead><tr><th>Key</th><th>A version</th><th>Context</th><th>Replication</th><th>B last ack</th><th>L1 tok</th><th>Full tok</th><th>Policy</th><th></th></tr></thead>
         <tbody id="rows"></tbody>
       </table>
       <div class="empty" id="emptyRows">No keys yet. Write one with the form on the right.</div>
@@ -363,7 +391,7 @@ svg.chart{display:block; width:100%; height:220px}
       <h3>Write Context</h3>
       <div class="field"><input id="putKey" placeholder="key, e.g. obs/turn-041" autocomplete="off"></div>
       <div class="field"><textarea id="putText" placeholder="observation text…"></textarea></div>
-      <div class="field"><button class="btn" id="btnPut">PUT /context/{key}</button></div>
+      <div class="field"><button class="btn" id="btnPut">PUT /key · save context &amp; replicate</button></div>
     </div>
 
     <div class="panel">
@@ -418,6 +446,270 @@ svg.chart{display:block; width:100%; height:220px}
     return { ok: r.ok, status: r.status, body };
   }
 
+  let requestSequence = 0, currentRequest = null, selectedCopy = null, pairBusy = false;
+  let demo = null, demoBusy = false;
+  const demoSteps = ["PUT & copy", "Fail B & update", "Read from A", "Recover copy", "Page & hydrate"];
+  const shortValue = value => {
+    const text = String(value ?? "");
+    return text.length > 280 ? text.slice(0, 280) + `… [preview of ${text.length.toLocaleString()} characters]` : text;
+  };
+
+  function setPhases(local, copied, failed, context) {
+    const entries = [
+      ["phaseRequest", "1 · REST request", currentRequest ? "done" : ""],
+      ["phaseLocal", "2 · saved on A", local ? "done" : ""],
+      ["phaseCopy", "3 · HTTP copy A → B", copied ? "done" : failed ? "failed" : local ? "active" : ""],
+      ["phaseAck", "4 · B acknowledgment", copied ? "done" : failed ? "failed" : ""],
+      ["phaseContext", "5 · context: " + (context || "separate view"), context ? "context" : ""],
+    ];
+    for (const [id, text, phase] of entries) { $(id).textContent = text; $(id).dataset.phase = phase; }
+  }
+
+  function beginRequest(method, route, body, key) {
+    const request = {id: ++requestSequence, method, route, key, baseVersion: status?.keys?.[key]?.version || 0, started: Date.now(), result: null};
+    currentRequest = request;
+    $("requestRoute").textContent = `${method} ${route}`;
+    const payload = body == null ? "No request body" : JSON.stringify(body, null, 2);
+    $("requestBody").textContent = payload.length > 1300 ? payload.slice(0, 1300) + "\n… [display preview; the complete body is sent]" : payload;
+    $("requestOutcome").textContent = "Request in progress…";
+    setPhases(false, false, false, null);
+    return request;
+  }
+
+  function finishRequest(request, result) {
+    if (currentRequest !== request) return;
+    request.result = result;
+    $("requestOutcome").textContent = `Node A: ${result.status ? "HTTP " + result.status : "no response / outcome unknown"} · ${Date.now() - request.started} ms client round trip`;
+    const copied = result.ok && result.body?.replicated === true;
+    const local = request.method === "PUT" && result.ok;
+    setPhases(local, copied, local && !copied, status?.keys?.[request.key] ? contextLabel(status.keys[request.key].residence) : null);
+  }
+
+  function contextLabel(residence) {
+    return residence === "RESIDENT_FULL" ? "resident full" : residence === "SPILLED_LOCAL" ? "local spill stub" : "paged stub";
+  }
+
+  async function writeValue(key, value, options = {}) {
+    const body = {key, value, ...options};
+    const request = beginRequest("PUT", "/key", body, key);
+    activeWrite = key;
+    transfer("pending", `${key} — PUT /key → durable save on A → POST /replicate to B…`);
+    try {
+      const result = await api("/key", {method: "PUT", body: JSON.stringify(body)});
+      finishRequest(request, result);
+      if (result.ok) {
+        selected = key;
+        const copied = result.body.replicated;
+        transfer(copied ? "ok" : "bad", `${key} v${result.body.version} — ${copied ? "B acknowledged the full copy. Context paging is a separate decision." : "saved on A; B did not acknowledge the copy. Background retry remains pending."}`);
+      } else transfer("bad", `${key} — ${result.status ? "HTTP " + result.status : "connection failed; write outcome unknown"}.`);
+      return result;
+    } finally { activeWrite = null; }
+  }
+
+  async function observedRead(key, hydrate = false) {
+    const route = hydrate ? `/context/${enc(key)}?hydrate=true` : `/key/${enc(key)}`;
+    const request = beginRequest("GET", route, null, key);
+    if (hydrate) transfer("hydrate", `${key} — hydrate context from B → A…`);
+    const result = await api(route);
+    finishRequest(request, result);
+    if (hydrate) transfer(result.ok ? result.body.source === "L2_PAGE_FAULT" ? "hydrated" : "idle" : "bad", result.ok ? `${key} — full context restored via ${result.body.source}.` : `${key} — hydration failed; check the complete local value separately.`);
+    return result;
+  }
+
+  function renderReplicationResult(result) {
+    $("resultKey").textContent = result ? `${result.key} · v${result.version}` : "No write replication attempt recorded";
+    $("resultRoute").textContent = result ? `${result.method} ${result.path}` : "POST /replicate";
+    $("resultHttp").textContent = !result ? "—" : result.http_status == null ? "No HTTP response" : `HTTP ${result.http_status}`;
+    $("resultDuration").textContent = result?.elapsed_ms == null ? "—" : `${Number(result.elapsed_ms).toFixed(1)} ms`;
+    $("resultSource").textContent = !result ? "—" : result.source === "background_retry" ? "Background retry" : "Client write";
+    $("resultReason").textContent = !result ? "Write a value to record an actual HTTP result." : result.ok ? "Acknowledgment validated: matching key, version and value digest." : result.error || "Copy not acknowledged.";
+    $("resultReason").className = "result-reason " + (!result ? "" : result.ok ? "ok-text" : "bad-text");
+    $("resultWhen").textContent = result?.received_at ? `Attempt ${result.attempt} · ${new Date(result.received_at * 1000).toLocaleTimeString()}` : "";
+    if (currentRequest?.method === "PUT") {
+      const entry = status?.keys?.[currentRequest.key];
+      const local = !!entry && (entry.version > currentRequest.baseVersion || currentRequest.result?.ok);
+      const copied = !!entry && entry.acked_version === entry.version;
+      setPhases(local, copied, local && entry.consistency_status === "DIRTY_UNREPLICATED", entry ? contextLabel(entry.residence) : null);
+    } else if (currentRequest?.result?.ok) {
+      const entry = status?.keys?.[currentRequest.key];
+      if (entry) setPhases(true, entry.acked_version === entry.version, entry.consistency_status === "DIRTY_UNREPLICATED", contextLabel(entry.residence));
+    }
+  }
+
+  async function loadCopyPair() {
+    if (!selected || pairBusy) return;
+    const key = selected;
+    pairBusy = true;
+    try {
+      const result = await api(`/replication/key/${enc(key)}`);
+      if (selected !== key) return;
+      $("copyPair").hidden = false;
+      if (!result.ok) {
+        selectedCopy = null;
+        $("pairKey").textContent = key;
+        $("pairComparison").textContent = "Replication: unknown · comparison unavailable";
+        $("pairAVersion").textContent = "Not verified";
+        $("pairAValue").textContent = "Could not check the current local value.";
+        $("pairBVersion").textContent = "Not verified";
+        $("pairBValue").textContent = "Could not obtain a current copy comparison.";
+        return;
+      }
+      selectedCopy = result.body;
+      renderCopyPair(result.body);
+      if (status) render();
+    } finally {
+      pairBusy = false;
+      if (selected && selected !== key) loadCopyPair();
+    }
+  }
+
+  function renderCopyPair(pair) {
+    $("pairKey").textContent = pair.key;
+    const labels = {in_sync: "in sync", pending: "pending", diverged: "diverged", unknown: "unknown"};
+    const pending = pair.node_a && pair.node_a.acked_version !== pair.node_a.version;
+    $("pairComparison").textContent = `Replication: ${labels[pair.comparison_status] || "unknown"}${pending ? " · 1 pending update" : ""}`;
+    $("pairContext").textContent = `Context: ${pair.node_a ? contextLabel(pair.node_a.residence) : "not present"}`;
+    $("pairAVersion").textContent = pair.node_a ? `${pair.key} · v${pair.node_a.version}` : "Key missing on A";
+    $("pairAValue").textContent = pair.node_a?.value == null ? "Full local value unavailable" : shortValue(pair.node_a.value);
+    $("pairBVersion").textContent = pair.node_b ? `${pair.key} · v${pair.node_b.version}` : pair.node_b_state === "missing" ? "No replica for this key" : "B unavailable · copy not verified";
+    $("pairBValue").textContent = pair.node_b ? shortValue(pair.node_b.value) : pair.node_b_state === "missing" ? "B responded: key not found." : "Current contents are unknown. A past acknowledgment is not a live comparison.";
+  }
+
+  async function adminApi(path, options = {}) {
+    let result = await api(path, options);
+    if (result.status === 403) {
+      const supplied = prompt("Enter PAGERKV_ADMIN_TOKEN configured on both nodes:", "");
+      if (supplied) { adminToken = supplied.trim(); result = await api(path, options); }
+    }
+    return result;
+  }
+
+  function requireOk(result, label) {
+    if (!result.ok) throw new Error(`${label}: ${result.status ? "HTTP " + result.status : "connection failed / outcome unknown"}`);
+    return result.body;
+  }
+
+  async function demoFault(mode) {
+    return requireOk(await adminApi("/admin/node_b/fault", {method: "POST", body: JSON.stringify({mode, delay_s: 0})}), "Changing B's mode");
+  }
+
+  function renderDemo() {
+    $("demoSteps").innerHTML = demoSteps.map((label, index) => `<li class="${demo && index < demo.step ? "complete" : demo && index === demo.step ? "current" : ""}"><span>${index + 1}</span>${label}</li>`).join("");
+    $("btnDemoNext").disabled = demoBusy || !!demo && demo.step >= demoSteps.length;
+    $("btnDemoNext").textContent = demoBusy ? "Checking real services…" : !demo || demo.step === 0 ? "Start guided demo" : demo.step >= demoSteps.length ? "Demo completed" : demo.step === 4 && demo.pageReady ? "Hydrate sample B → A" : `Next: ${demoSteps[demo.step]}`;
+    $("btnDemoReset").disabled = demoBusy || !demo;
+  }
+
+  async function waitForDemoCopy(key) {
+    for (let i = 0; i < 40; i++) {
+      const result = await api(`/replication/key/${enc(key)}`);
+      if (result.ok && result.body.comparison_status === "in_sync") return result.body;
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    throw new Error("B has not acknowledged the matching copy yet. Retry this step or reset the demo.");
+  }
+
+  async function demoNext() {
+    if (demoBusy || demo?.step >= demoSteps.length) return;
+    demoBusy = true;
+    renderDemo();
+    try {
+      if (!demo) {
+        const mode = requireOk(await adminApi("/admin/node_b/fault"), "Reading failure controls");
+        if (mode.mode !== "none") throw new Error("Set Node B Online before starting this demo.");
+        const current = requireOk(await api("/context/status?include_text=false"), "Reading context budget");
+        if (current.max_window_tokens < 512) throw new Error("Use a context budget of at least 512 tokens for this demonstration.");
+        const prefix = `demo_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+        demo = {step: 0, prefix, key: prefix + "_observation", keys: new Set(), budget: current.max_window_tokens, tookDown: false};
+      }
+      const key = demo.key;
+      selected = key;
+      if (demo.step === 0) {
+        const value = "Observation: the billing service reads the orders table. " + "Keep the full database schema and request trace so the agent can retrieve the exact context later. ".repeat(6);
+        demo.value = value;
+        demo.keys.add(key);
+        const result = requireOk(await writeValue(key, value, {pinned: true}), "Initial write");
+        if (!result.replicated) throw new Error("A accepted the value, but B has not acknowledged it. Keep B online and retry.");
+        await waitForDemoCopy(key);
+        $("demoProof").textContent = `Step 1 verified: PUT /key saved ${key} v${result.version} on A and B acknowledged the matching complete copy. The small context block remains pinned and resident.`;
+      } else if (demo.step === 1) {
+        await demoFault("down");
+        demo.tookDown = true;
+        demo.value = "Updated observation: the billing service also reads payments. " + demo.value;
+        const result = requireOk(await writeValue(key, demo.value), "Write during outage");
+        if (result.replicated) throw new Error("Expected a pending copy while B was down; inspect the actual node state.");
+        const global = requireOk(await api("/replication/status"), "Checking consistency");
+        if (global.comparison_status !== "unknown") throw new Error("B did not report the expected unavailable state.");
+        $("demoProof").textContent = `Step 2 verified: A accepted v${result.version}, replication failed, and the copy is pending. Consistency is unknown because B cannot be inspected. B stays down until recovery or reset.`;
+      } else if (demo.step === 2) {
+        const result = requireOk(await observedRead(key), "Reading A during outage");
+        if (result.value !== demo.value) throw new Error("Node A did not return the expected complete value.");
+        $("detailOut").textContent = result.value;
+        $("demoProof").textContent = `Step 3 verified: GET /key/{key} returned the complete updated v${result.version} value from A's LOCAL_STORE while B was unavailable.`;
+      } else if (demo.step === 3) {
+        await demoFault("none");
+        demo.tookDown = false;
+        $("demoProof").textContent = "B is online. Waiting for the real background retry; no replacement write is sent…";
+        const pair = await waitForDemoCopy(key);
+        transfer("ok", `${key} v${pair.node_b.version} — background retry restored the matching full replica.`);
+        $("demoProof").textContent = `Step 4 verified: background retry copied v${pair.node_b.version}. Values and versions match on both nodes. Other existing keys are checked separately by the global consistency status.`;
+      } else if (!demo.pageReady) {
+        requireOk(await api(`/context/${enc(key)}`, {method: "PATCH", body: JSON.stringify({pinned: false, priority: -100})}), "Unpinning the sample context");
+        let paged = null;
+        for (let i = 0; i < 4 && !paged; i++) {
+          const fillKey = demo.prefix + "_context_" + i;
+          demo.keys.add(fillKey);
+          const repetitions = Math.min(6000, Math.max(40, Math.ceil(demo.budget / 12)));
+          const value = `Context ${i}: archive sample for the guided demo. ` + "The agent keeps database schema, service routing, request details and exact observations for later retrieval. ".repeat(repetitions);
+          const result = requireOk(await writeValue(fillKey, value), "Adding context for paging");
+          if (!result.replicated) throw new Error("The context filler was not acknowledged by B. Restore B before continuing.");
+          const snapshot = requireOk(await api("/context/status?include_text=false"), "Checking actual paging");
+          if (snapshot.keys[key]?.residence === "PAGED_TO_NODE_B") paged = key;
+          else paged = [...demo.keys].find(k => snapshot.keys[k]?.residence === "PAGED_TO_NODE_B") || null;
+        }
+        if (!paged) throw new Error("No sample block paged at this budget. Use a smaller context budget and retry; no paging result was simulated.");
+        selected = paged;
+        const local = requireOk(await observedRead(paged), "Reading a paged value locally");
+        demo.pagedKey = paged; demo.pagedValue = local.value; demo.pageReady = true;
+        transfer("idle", `${paged} — context is now a stub; the complete value still exists on both nodes. Paging did not move or delete the stored value.`);
+        $("demoProof").textContent = "Step 5, paging verified: the acknowledged block is now a short context stub, while both complete values remain readable. Inspect the separate Replication and Context badges, then click Hydrate sample B → A.";
+        await poll(); loadPrompt(); await loadCopyPair();
+        return;
+      } else {
+        selected = demo.pagedKey;
+        const hydrated = requireOk(await observedRead(demo.pagedKey, true), "Hydrating from B");
+        if (hydrated.source !== "L2_PAGE_FAULT" || hydrated.full_text !== demo.pagedValue) throw new Error("The archive hydration did not return the exact local value.");
+        $("detailOut").textContent = hydrated.full_text;
+        $("demoProof").textContent = "Step 5 verified: an acknowledged full value became a context stub, stayed readable locally, and hydrated exactly from B. Replication copies data; paging changes the active prompt. Sample keys remain until reset.";
+      }
+      demo.step++;
+      await poll(); loadPrompt(); await loadCopyPair();
+    } catch (error) {
+      $("demoProof").textContent = error.message;
+      logEvent("bad", esc("Guided demo: " + error.message));
+    } finally { demoBusy = false; renderDemo(); }
+  }
+
+  async function demoReset() {
+    if (demoBusy || !demo) return;
+    demoBusy = true; renderDemo();
+    try {
+      if (demo.tookDown) { await demoFault("none"); demo.tookDown = false; }
+      for (const key of [...demo.keys]) {
+        requireOk(await api(`/key/${enc(key)}`, {method: "DELETE"}), "Removing sample key");
+        demo.keys.delete(key);
+      }
+      if (selected?.startsWith(demo.prefix + "_")) { selected = null; selectedCopy = null; $("copyPair").hidden = true; }
+      demo = null;
+      $("demoProof").textContent = "Demo reset. B was restored if this demo took it down, and only the generated sample keys were removed.";
+      await poll(); loadPrompt();
+    } catch (error) { $("demoProof").textContent = error.message + ". Reset can be retried."; }
+    finally { demoBusy = false; renderDemo(); }
+  }
+  $("btnDemoNext").onclick = demoNext;
+  $("btnDemoReset").onclick = demoReset;
+  renderDemo();
+
   // ------------------------------------------------------------ polling
   async function poll() {
     if (busy) return;
@@ -429,7 +721,8 @@ svg.chart{display:block; width:100%; height:220px}
       if (!h.ok || !s.ok || !s.body?.keys) throw new Error("Node A status unavailable");
       const comparison = c.ok ? c.body.comparison_status : "unknown";
       const names = { in_sync: "in sync", pending: "pending", diverged: "diverged", unknown: "unknown" };
-      $("comparisonChip").textContent = names[comparison] || "unknown";
+      const pendingCount = (s.body.keys ? Object.values(s.body.keys).filter(k => k.acked_version !== k.version).length : 0) + (s.body.pending_deletes || 0);
+      $("comparisonChip").textContent = (names[comparison] || "unknown") + (pendingCount ? ` · ${pendingCount} pending` : "");
       $("comparisonChip").style.color = comparison === "in_sync" ? "var(--ok)" : comparison === "pending" ? "var(--warn)" : "var(--bad)";
       $("backingCount").textContent = `${s.body.local_value_count || 0} full values retained locally.`;
       $("dotLive").className = "dot ok"; $("liveTxt").textContent = "live · " + new Date().toLocaleTimeString();
@@ -452,6 +745,8 @@ svg.chart{display:block; width:100%; height:220px}
         status = s.body;
         sample(status);
         render();
+        renderReplicationResult(s.body.last_replication);
+        loadCopyPair();
       }
     } catch (e) {
       $("dotLive").className = "dot bad"; $("liveTxt").textContent = "disconnected";
@@ -683,6 +978,16 @@ svg.chart{display:block; width:100%; height:220px}
         blk.addEventListener("mouseleave", hideTip);
         blk.addEventListener("click", () => select(key));
         g.appendChild(blk);
+        if (key === selected) {
+          const labelPoint = P(gx + .5, gy + .5, h + 10);
+          const label = document.createElementNS(NS, "text");
+          label.setAttribute("x", labelPoint[0]); label.setAttribute("y", labelPoint[1]);
+          label.setAttribute("text-anchor", "middle"); label.setAttribute("class", "block-label");
+          const actual = selectedCopy?.key === key ? selectedCopy.node_b?.version : null;
+          const version = f.l1 ? k.version : actual ?? k.acked_version;
+          label.textContent = `${key.length > 22 ? key.slice(0, 19) + "…" : key} · ${!f.l1 && actual == null ? "last ack " : ""}v${version}`;
+          g.appendChild(label);
+        }
       });
       // label under the front corner
       const lp = P(N, N, -th), t = document.createElementNS(NS, "text");
@@ -742,9 +1047,10 @@ svg.chart{display:block; width:100%; height:220px}
     $("rows").innerHTML = keys.map(([key, k]) => `
       <tr class="row${key === selected ? " sel" : ""}" data-key="${esc(key)}">
         <td class="key" title="${esc(key)}">${esc(key)}</td>
-        <td>${k.version}</td>
+        <td>v${k.version}</td>
         <td>${tagRes(k.residence)}</td>
         <td>${tagCon(k.consistency_status)}</td>
+        <td>${k.acked_version ? "v" + k.acked_version : "none"}</td>
         <td>${fmt(k.active_tokens_in_node_a)}</td>
         <td>${fmt(k.full_tokens_on_node_b)}</td>
         <td>${k.pinned ? `<span class="tag pin">pinned</span> ` : ""}${k.priority ? `<span class="mono" style="color:var(--muted)">p${k.priority}</span>` : ""}</td>
@@ -783,6 +1089,7 @@ svg.chart{display:block; width:100%; height:220px}
     if (status) render();
     $("detailOut").textContent = "loading…";
     peek(key);
+    loadCopyPair();
   }
 
   $("btnView").onclick = () => peek(selected);
@@ -799,13 +1106,12 @@ svg.chart{display:block; width:100%; height:220px}
   };
   $("btnValue").onclick = async () => {
     if (!selected) return;
-    const result = await api(`/key/${enc(selected)}`);
+    const result = await observedRead(selected);
     $("detailOut").textContent = result.ok ? result.body.value : `HTTP ${result.status}\n` + JSON.stringify(result.body, null, 2);
     toast(result.ok ? `${selected}: full value from Node A's local store` : "Local value unavailable", !result.ok);
   };
   $("btnHydrate").onclick = async () => {
-    transfer("hydrate", `${selected} — fetching full context text for the active window…`);
-    const r = await api(`/context/${enc(selected)}?hydrate=true`);
+    const r = await observedRead(selected, true);
     if (r.ok) {
       $("detailOut").textContent = r.body.full_text;
       transfer(r.body.source === "L2_PAGE_FAULT" ? "hydrated" : "idle", `${selected} — full context restored via ${r.body.source}.`);
@@ -827,28 +1133,14 @@ svg.chart{display:block; width:100%; height:220px}
   };
 
   $("btnPut").onclick = async () => {
-    const key = $("putKey").value.trim(), text = $("putText").value;
-    if (!key || !text.trim()) { toast("Key and text are required", true); return; }
-    const button = $("btnPut");
-    button.disabled = true; activeWrite = key;
-    transfer("pending", `${key} — writing on Node A and requesting a copy on Node B…`);
+    const key = $("putKey").value.trim(), value = $("putText").value;
+    if (!key) { toast("A key is required", true); return; }
+    $("btnPut").disabled = true;
     try {
-      const r = await api(`/context/${enc(key)}`, { method: "PUT", body: JSON.stringify({ text }) });
-      if (r.ok) {
-        const synced = r.body.consistency_status === "SYNCED_ARCHIVED";
-        transfer(synced ? "ok" : "bad", synced
-          ? `${key} v${r.body.version} — Node B acknowledged the copy; full value retained locally, active context may now page to a stub.`
-          : `${key} v${r.body.version} — stored on Node A; copy pending. Background retry will resume replication.`);
-        toast(`v${r.body.version} · ${r.body.consistency_status.toLowerCase().replace(/_/g, " ")}${r.body.over_budget ? " · OVER BUDGET" : ""}`, r.body.over_budget);
-        $("putText").value = ""; select(key);
-      } else {
-        transfer("bad", `${key} — ${r.status ? `write rejected (HTTP ${r.status})` : "request timed out or connection failed; outcome unknown, refresh status before retrying"}.`);
-        toast(`PUT failed (${r.status || "connection error"})`, true);
-      }
-    } finally {
-      activeWrite = null; button.disabled = false;
-      poll(); loadPrompt();
-    }
+      const result = await writeValue(key, value);
+      if (result.ok) { $("putText").value = ""; select(key); toast(`${key} v${result.body.version} · ${result.body.replicated ? "copy acknowledged" : "saved locally · copy pending"}`); }
+      else toast(`PUT failed (${result.status || "connection error"})`, true);
+    } finally { $("btnPut").disabled = false; poll(); loadPrompt(); }
   };
 
   async function search() {
