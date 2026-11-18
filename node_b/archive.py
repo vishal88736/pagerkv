@@ -68,7 +68,7 @@ def init_db() -> None:
     with _connect() as conn:
         # WAL keeps readers from blocking the single writer and survives restarts.
         conn.execute("PRAGMA journal_mode = WAL")
-        conn.execute(_SCHEMA)
+        conn.executescript(_SCHEMA)
         if _detect_fts(conn):
             conn.execute(
                 "CREATE VIRTUAL TABLE IF NOT EXISTS archive_fts USING fts5(key, full_text)"

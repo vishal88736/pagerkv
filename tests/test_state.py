@@ -43,7 +43,7 @@ def test_compaction_uses_rendered_prompt_and_keeps_hot_keys(tmp_path) -> None:
             state_file=str(tmp_path / "state.json"),
         )
         replicator = OkReplicator()
-        text = "observation data " * 20  # ~40 tokens per block
+        text = "observation data " * 60  # ~121 tokens; the stub is ~45
 
         for i in range(150):
             await state.put(f"k{i:03d}", text, replicator)
