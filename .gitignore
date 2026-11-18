@@ -11,3 +11,4 @@ node_a_state.json
 node_a_state.json.tmp
 .mypy_cache/
 .ruff_cache/
+bench/_run/

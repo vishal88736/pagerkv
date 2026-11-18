@@ -133,7 +133,7 @@ def test_ack_requires_matching_key_and_digest():
         ]:
             async with httpx.AsyncClient(
                 transport=httpx.MockTransport(
-                    lambda request: httpx.Response(
+                    lambda request, key=key, digest=digest: httpx.Response(
                         200,
                         json={
                             "key": key,

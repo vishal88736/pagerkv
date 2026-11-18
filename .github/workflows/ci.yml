@@ -28,6 +28,17 @@ jobs:
           node-version: "22"
       - name: Dashboard behavior
         run: node --test tests/dashboard.test.cjs
+      - name: Context benchmark
+        env:
+          SPILL_DIRTY: "0"
+        run: python bench/run_benchmark.py --check | tee bench-summary.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: context-benchmark
+          path: |
+            bench/results.csv
+            bench-summary.txt
 
   docker:
     runs-on: ubuntu-latest

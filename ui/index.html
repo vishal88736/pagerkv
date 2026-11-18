@@ -539,7 +539,7 @@ svg.chart{display:block; width:100%; height:220px}
       : spilled.length ? `${spilled.length} spilled to local disk` : "awaiting Node B";
 
     renderComposition(s, keys);
-    renderIso([...resident, ...spilled], archived);
+    renderIso([...resident, ...spilled, ...paged], archived);
     renderLive();
     renderTable(keys);
     renderDetailMeta();
@@ -662,23 +662,24 @@ svg.chart{display:block; width:100%; height:220px}
       items.forEach(([key, k], i) => {
         const gx = i % N, gy = Math.floor(i / N);
         const c = classify(k);
-        const tok = f.l1 && !c.spilled ? (k.active_tokens_in_node_a || 1) : (k.full_tokens_on_node_b || k.active_tokens_in_node_a || 1);
-        const h = cell * (0.35 + 2.4 * Math.sqrt(tok / maxTok)) * (c.spilled ? 0.45 : 1);
+        const isStub = f.l1 && (c.spilled || k.residence === "PAGED_TO_NODE_B");
+        const tok = f.l1 ? (k.active_tokens_in_node_a || 1) : (k.full_tokens_on_node_b || 1);
+        const h = cell * (0.35 + 2.4 * Math.sqrt(tok / maxTok)) * (isStub ? 0.45 : 1);
         const pad = 0.14, x0 = gx + pad, x1 = gx + 1 - pad, y0 = gy + pad, y1 = gy + 1 - pad;
         const base = f.bad ? [255,107,107] : c.spilled ? [159,140,255] : c.dirty ? [242,180,90] : c.pending ? [223,231,236] : f.l1 ? [143,214,245] : [63,156,200];
-        const fade = c.spilled ? 0.55 : 1;
+        const fade = isStub ? 0.55 : 1;
         const rgb = (m, al) => `rgba(${base.map(v => Math.round(v * m)).join(",")},${al * fade})`;
         const blk = document.createElementNS(NS, "g");
         blk.setAttribute("class", "blk" + (key === selected ? " sel" : ""));
         if (c.dirty && !c.spilled) blk.setAttribute("filter", "url(#glow)");
-        if (c.spilled) blk.setAttribute("stroke-dasharray", "3 2");
+        if (isStub) blk.setAttribute("stroke-dasharray", "3 2");
         blk.appendChild(poly([P(x0,y1,0), P(x1,y1,0), P(x1,y1,h), P(x0,y1,h)], { fill: rgb(.55, .55), stroke: rgb(1, .5), "stroke-width": ".6" }));
         blk.appendChild(poly([P(x1,y0,0), P(x1,y1,0), P(x1,y1,h), P(x1,y0,h)], { fill: rgb(.38, .55), stroke: rgb(1, .5), "stroke-width": ".6" }));
         blk.appendChild(poly([P(x0,y0,h), P(x1,y0,h), P(x1,y1,h), P(x0,y1,h)], { fill: rgb(1, .75), stroke: rgb(1, .9), "stroke-width": ".6" }));
         const title = document.createElementNS(NS, "title");
         title.textContent = f.l1 ? `${key} · current v${k.version}` : `${key} · archived v${k.acked_version}${k.acked_version !== k.version ? ` · awaiting v${k.version}` : " · acknowledged copy"}`;
         blk.appendChild(title);
-        blk.addEventListener("mousemove", e => showTip(e, key, k));
+        blk.addEventListener("mousemove", e => showTip(e, key, f.l1 ? k : { ...k, version: k.acked_version, residence: "ARCHIVED_FULL", consistency_status: k.acked_version === k.version ? "SYNCED_ARCHIVED" : "STALE_COPY" }));
         blk.addEventListener("mouseleave", hideTip);
         blk.addEventListener("click", () => select(key));
         g.appendChild(blk);
