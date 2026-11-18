@@ -12,16 +12,18 @@ remain stored separately.
 > Hydration retrieves the original text. These are three separate operations.**
 
 **Concepts demonstrated:** REST, HTTP verbs, replication, consistency, versioned
-acknowledgments, failure recovery, and context management.
+acknowledgments, failure recovery, OS dirty-bit pattern, CAP availability, and context management.
 
 ## Contents
 
 - [Problem statement alignment](#problem-statement-alignment)
+- [How PagerKV goes beyond the assignment](#how-pagerkv-goes-beyond-the-assignment)
+- [Design decisions & distributed systems principles](#design-decisions--distributed-systems-principles)
 - [Replication, paging, and hydration](#replication-paging-and-hydration)
 - [Architecture](#architecture)
 - [Quick start](#quick-start)
-- [Guided demonstration](#guided-demonstration)
-- [Dashboard screenshots](#dashboard-screenshots)
+- [Interactive CLI demonstration](#interactive-cli-demonstration)
+- [Guided demonstration & web dashboard](#guided-demonstration--web-dashboard)
 - [REST API](#rest-api)
 - [Consistency and failure handling](#consistency-and-failure-handling)
 - [Configuration and persistence](#configuration-and-persistence)
@@ -31,20 +33,50 @@ acknowledgments, failure recovery, and context management.
 
 ## Problem statement alignment
 
-The required distributed key-value store is the foundation. Context management
-provides a practical use case: an observation's name is its key, and its full
-text is the value.
+The core distributed key-value store assignment requires two HTTP services, replication on write, failure tracking, and consistency status. PagerKV fulfills every baseline requirement while applying it to a practical real-world problem: **LLM agent memory management**.
 
 | Problem requirement | PagerKV implementation |
 | --- | --- |
-| Node A stores key-value pairs over HTTP | FastAPI primary with PUT, GET, and DELETE endpoints |
-| A second Node B service or module | Separate FastAPI service with its own SQLite archive |
-| Every PUT triggers replication to B | Both key-value and context writes call the same HTTP replicator |
-| Track replication success and failure | Attempt counters, errors, acknowledged versions, HTTP status, and duration |
-| Show basic consistency status | Live comparison API, paired values, and dashboard indicators |
+| Node A stores key-value pairs over HTTP | FastAPI primary service with PUT, GET, and DELETE endpoints (`/key` and `/key/{key}`) |
+| A second Node B service or module | Independent FastAPI service with its own persistent SQLite archive |
+| Every PUT triggers replication to B | HTTP `POST /replicate` with SHA-256 validation and versioned acknowledgments |
+| Track replication success and failure | Measured round-trip times, HTTP status codes, attempt counters, error categorization |
+| Show basic consistency status | Real-time comparison API (`/replication/status`), paired key inspector, and visual status badges |
 
-Context budgets, stubs, paging, hydration, search, and animations extend the core
-replication project. They do not replace its REST operations.
+## How PagerKV goes beyond the assignment
+
+Rather than a toy mock, PagerKV implements production-style distributed systems patterns:
+
+| Baseline assignment | PagerKV advanced implementation | Distributed systems concept |
+| --- | --- | --- |
+| Simple key-value store | Bounded active prompt window with priority & LRU compaction | OS memory paging & virtual memory |
+| Basic mock Node B | Real independent HTTP service with SQLite + WAL + FTS5 full-text search | Tiered storage architecture (L1 cache vs L2 archive) |
+| Fire-and-forget replication | Versioned acknowledgments + SHA-256 payload integrity validation | Two-phase handshake & cryptographic verification |
+| Binary success/failure log | Per-key state machine (`PENDING` → `SYNCED_ARCHIVED` vs `DIRTY_UNREPLICATED`) | Dirty-bit tracking & eviction safety |
+| Passive status display | Live store-diff comparator (`/replication/status`) + automated background retry loop | Eventual consistency convergence & self-healing |
+| Manual API verification | Redesigned modern web console + automated CLI demo script (`python demo.py`) | Developer experience & test automation |
+
+## Design decisions & distributed systems principles
+
+### 1. Why write-back semantic paging instead of synchronous write-through?
+In LLM agent architectures, tool execution (web scrapes, SQL dumps, shell logs) produces large token bursts. Synchronous summarization before write acceptance would introduce 2–5 second latencies per turn. PagerKV employs **write-back paging**: Node A accepts writes immediately into local storage, replicates raw text to Node B, and only compacts blocks into concise stubs when prompt token pressure demands it.
+
+### 2. Consistency-gated compaction (The OS Dirty-Bit Pattern)
+In operating systems, a dirty RAM page cannot be evicted to make room for another process until it has been safely written to disk. PagerKV maps this exact principle to LLM context windows:
+- **`SYNCED_ARCHIVED`**: Node B has acknowledged the exact current version. Eviction to a 25-token stub is allowed.
+- **`DIRTY_UNREPLICATED`**: Node B is unreachable or failed to acknowledge. Eviction is **strictly forbidden**, even if Node A temporarily exceeds its token budget (`over_budget: true`). This prevents **permanent agent amnesia** during network partitions.
+
+### 3. CAP theorem: Prioritizing availability for ingestion with eventual consistency
+During network partitions (Node B offline):
+- Node A remains **available (AP)**: It continues accepting `PUT` requests locally (HTTP 200) and serving durable reads via `GET /key/{key}`.
+- Global consistency temporarily degrades to `unknown` / `degraded`.
+- When Node B recovers, Node A's background retry loop automatically converges all pending writes and deletions without requiring client re-submissions.
+
+### 4. Tombstone watermarks against out-of-order packet delivery
+In distributed networks, delayed replication packets can arrive after a key was deleted. PagerKV enforces versioned tombstone watermarks:
+- Deleting key `x` at version 3 records a tombstone `x <= 3`.
+- Any delayed replication for version 3 or older is rejected as stale, preventing deleted keys from being resurrected.
+
 
 ## Replication, paging, and hydration
 
@@ -199,9 +231,28 @@ Open the same dashboard URL. Enter that token when the failure controls request
 it. Each container has its own named data volume; ports are published on localhost.
 Stop while retaining data with `docker compose down`.
 
-## Guided demonstration
+## Interactive CLI demonstration
 
-Open the dashboard and click **Start guided demo**. Advance one step at a time:
+For evaluators who prefer terminal automation or running headless without a browser, PagerKV includes an interactive, zero-dependency CLI demonstration script:
+
+```bash
+# Interactive mode (pauses between steps with explanations):
+python demo.py
+
+# Fully automated non-interactive run:
+python demo.py --auto --delay 0.5
+```
+
+The script exercises the complete 5-phase lifecycle against real running services:
+1. **Ingest & Replicate:** Writes observation via `PUT /key`, verifies versioned SHA-256 replication acknowledgment on Node B.
+2. **Network Partition (Dirty-Bit Guard):** Injects Node B fault (`mode="down"`), writes updated key, verifies Node A returns HTTP 200 (AP availability) while locking eviction (`eviction_allowed=false`).
+3. **Local Read During Outage:** Reads the primary value from Node A's durable local store while Node B remains offline.
+4. **Self-Healing Recovery:** Brings Node B back online and verifies the background retry loop converges without manual intervention (`in_sync`).
+5. **Context Paging & Page Fault:** Ingests observations exceeding the window token budget, watches cold synced keys page to 25-token stubs, and triggers a live page fault (`GET /context/{key}?hydrate=true`) restoring the exact lossless text from Node B.
+
+## Guided demonstration & web dashboard
+
+Open the redesigned web console at [http://127.0.0.1:8001/ui](http://127.0.0.1:8001/ui) and click **Start guided demo**. Advance one step at a time:
 
 | Step | Action | What it proves |
 | --- | --- | --- |
