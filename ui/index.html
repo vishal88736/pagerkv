@@ -372,6 +372,12 @@ pre.out{
   .stats-grid{grid-template-columns:1fr}
   .demo-steps{grid-template-columns:1fr}
   .evidence-grid, .pair-grid{grid-template-columns:1fr}
+  .transfer-track{gap:8px;padding:12px}
+  .transfer-node{min-width:0;padding:10px 8px}
+  .transfer-node b{font-size:11px;overflow-wrap:anywhere}
+  .node-role{font-size:10px}
+  .transfer-wire{flex:0 0 40px;min-width:40px}
+  .transfer-packet{width:18px}
 }
 </style>
 </head>
@@ -413,7 +419,7 @@ pre.out{
 <div class="main-wrapper">
 
   <div class="app-intro">
-    <div><strong>Distributed Key-Value Store w/ Semantic Write-Back Paging:</strong> Node A holds active context under strict token caps; Node B holds the lossless archive.</div>
+    <div><strong>REST Replication with Context Paging:</strong> Node A retains complete values and manages an active prompt budget; Node B stores full replicas.</div>
     <div id="backingCount" style="font-family:var(--mono);font-size:12px;color:var(--text-dim)"></div>
   </div>
 
@@ -431,7 +437,7 @@ pre.out{
     <ol class="demo-steps" id="demoSteps"></ol>
     <div class="demo-proof-box">
       <p class="demo-proof" id="demoProof" role="status" aria-live="polite">First prove a REST write is copied. Then demonstrate failure, local availability, recovery, and finally context paging.</p>
-      <p class="demo-note">Uses real HTTP requests and unique demo keys. Failure mode simulates network partition; background retries converge automatically.</p>
+      <p class="demo-note">Uses real HTTP requests and unique demo keys. The failure step makes B return HTTP 503; recovery retries the pending copies. Reset restores B and removes only this demo’s keys.</p>
     </div>
   </section>
 
@@ -459,7 +465,7 @@ pre.out{
         <span class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>
       </div>
       <div class="big" id="sSaved">–</div>
-      <div class="chip ok" id="sSavedChip">by replication</div>
+      <div class="chip ok" id="sSavedChip">by context paging</div>
     </div>
     <div class="card">
       <div class="card-head">
@@ -487,7 +493,7 @@ pre.out{
       </div>
       <div class="transfer-node">
         <b>Node B · Replica (L2 Archive)</b>
-        <small class="node-role">Lossless SQLite archive · SHA-256 verification · extracts summary stubs</small>
+        <small class="node-role">Full-text SQLite archive · returns version/digest acknowledgments · extracts summary stubs</small>
       </div>
     </div>
     <div class="transfer-detail" id="transferDetail" role="status" aria-live="polite">Write a context block to see it copied. Paging changes the active prompt, not the durable primary value.</div>
@@ -1070,7 +1076,8 @@ pre.out{
     if (transferAnimation) transferAnimation.cancel();
     if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     const wire = $("transferPacket").parentElement;
-    const end = Math.max(0, wire.clientWidth - 32);
+    const packetWidth = parseFloat(getComputedStyle($("transferPacket")).width) || 32;
+    const end = Math.max(0, wire.clientWidth - packetWidth);
     const up = state === "hydrate" || state === "hydrated";
     const stop = state === "bad" ? end * .45 : up ? 0 : end;
     const start = up ? end : 0;
@@ -1417,10 +1424,21 @@ pre.out{
     poll(); loadPrompt();
   };
   $("btnDelete").onclick = async () => {
-    if (!confirm(`Delete ${selected} from Node A?`)) return;
-    const r = await api(`/context/${enc(selected)}`, { method: "DELETE" });
-    toast(r.ok ? `Deleted ${selected}` : `Delete failed (${r.status})`, !r.ok);
-    selected = null; $("detailOut").textContent = "—"; poll(); loadPrompt();
+    if (!selected) return;
+    const key = selected;
+    if (!confirm(`Delete ${key} locally and replicate the deletion to Node B?`)) return;
+    const route = `/key/${enc(key)}`;
+    const request = beginRequest("DELETE", route, null, key);
+    const result = await api(route, {method: "DELETE"});
+    finishRequest(request, result);
+    toast(result.ok ? `Deleted ${key}; replica deletion is retried if needed` : `Delete failed (${result.status || "connection error"})`, !result.ok);
+    if (result.ok && selected === key) {
+      selected = null; selectedCopy = null;
+      $("copyPair").hidden = true;
+      $("detailOut").textContent = "—";
+      if (status) renderDetailMeta();
+    }
+    await poll(true); loadPrompt();
   };
 
   $("btnPut").onclick = async () => {

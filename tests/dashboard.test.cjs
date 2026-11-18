@@ -128,3 +128,27 @@ test('guided demo does not advance when a write fails',async()=>{
   assert.match(element('demoProof').textContent,/Initial write: HTTP 500/);
   assert.equal(element('btnDemoNext').disabled,false);
 });
+
+
+test('successful deletion records DELETE and clears the old paired-copy display',async()=>{
+  const {check,element,context}=dashboard();check.setStatus(state());check.setSelected('observation');
+  element('copyPair').hidden=false;element('detailOut').textContent='old full value';
+  context.fetch=async(url,options)=>url==='/key/observation' && options.method==='DELETE'
+    ? {ok:true,status:204,json:async()=>{throw new SyntaxError('No content')}}
+    : {ok:false,status:503,json:async()=>({})};
+  await element('btnDelete').onclick();
+  assert.equal(element('copyPair').hidden,true);
+  assert.equal(element('detailOut').textContent,'—');
+  assert.equal(element('requestRoute').textContent,'DELETE /key/observation');
+  assert.match(element('requestOutcome').textContent,/HTTP 204/);
+});
+
+test('a failed deletion keeps the selected value available for inspection',async()=>{
+  const {check,element,context}=dashboard();check.setStatus(state());check.setSelected('observation');
+  element('copyPair').hidden=false;element('detailOut').textContent='keep this value';
+  context.fetch=async()=>({ok:false,status:503,json:async()=>({error:'unavailable'})});
+  await element('btnDelete').onclick();
+  assert.equal(element('copyPair').hidden,false);
+  assert.equal(element('detailOut').textContent,'keep this value');
+  assert.match(element('requestOutcome').textContent,/HTTP 503/);
+});

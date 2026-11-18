@@ -12,7 +12,7 @@ remain stored separately.
 > Hydration retrieves the original text. These are three separate operations.**
 
 **Concepts demonstrated:** REST, HTTP verbs, replication, consistency, versioned
-acknowledgments, failure recovery, OS dirty-bit pattern, CAP availability, and context management.
+acknowledgments, failure recovery, OS dirty-bit-style safety, and context management.
 
 ## Contents
 
@@ -45,38 +45,59 @@ The core distributed key-value store assignment requires two HTTP services, repl
 
 ## How PagerKV goes beyond the assignment
 
-Rather than a toy mock, PagerKV implements production-style distributed systems patterns:
+PagerKV adds the following teaching and demonstration features to the core assignment:
 
 | Baseline assignment | PagerKV advanced implementation | Distributed systems concept |
 | --- | --- | --- |
 | Simple key-value store | Bounded active prompt window with priority & LRU compaction | OS memory paging & virtual memory |
 | Basic mock Node B | Real independent HTTP service with SQLite + WAL + FTS5 full-text search | Tiered storage architecture (L1 cache vs L2 archive) |
-| Fire-and-forget replication | Versioned acknowledgments + SHA-256 payload integrity validation | Two-phase handshake & cryptographic verification |
+| Replication call to B | Versioned acknowledgments + SHA-256 payload integrity validation | Acknowledgment validation and payload integrity |
 | Binary success/failure log | Per-key state machine (`PENDING` → `SYNCED_ARCHIVED` vs `DIRTY_UNREPLICATED`) | Dirty-bit tracking & eviction safety |
 | Passive status display | Live store-diff comparator (`/replication/status`) + automated background retry loop | Eventual consistency convergence & self-healing |
 | Manual API verification | Redesigned modern web console + automated CLI demo script (`python demo.py`) | Developer experience & test automation |
 
 ## Design decisions & distributed systems principles
 
-### 1. Why write-back semantic paging instead of synchronous write-through?
-In LLM agent architectures, tool execution (web scrapes, SQL dumps, shell logs) produces large token bursts. Synchronous summarization before write acceptance would introduce 2–5 second latencies per turn. PagerKV employs **write-back paging**: Node A accepts writes immediately into local storage, replicates raw text to Node B, and only compacts blocks into concise stubs when prompt token pressure demands it.
+### 1. Local save, bounded initial replication, and background retry
 
-### 2. Consistency-gated compaction (The OS Dirty-Bit Pattern)
-In operating systems, a dirty RAM page cannot be evicted to make room for another process until it has been safely written to disk. PagerKV maps this exact principle to LLM context windows:
-- **`SYNCED_ARCHIVED`**: Node B has acknowledged the exact current version. Eviction to a 25-token stub is allowed.
-- **`DIRTY_UNREPLICATED`**: Node B is unreachable or failed to acknowledge. Eviction is **strictly forbidden**, even if Node A temporarily exceeds its token budget (`over_budget: true`). This prevents **permanent agent amnesia** during network partitions.
+Node A persists the complete local value, then **waits for the initial replication
+attempt** before returning its response. A replica timeout or failure leaves that
+value accepted locally and marks it for background retry. This is not fully
+asynchronous write-back ingestion: the initial HTTP response can include the
+replication timeout. Context compaction is a separate decision after the result.
+B creates deterministic extractive stubs; no live LLM summarizer is involved.
 
-### 3. CAP theorem: Prioritizing availability for ingestion with eventual consistency
-During network partitions (Node B offline):
-- Node A remains **available (AP)**: It continues accepting `PUT` requests locally (HTTP 200) and serving durable reads via `GET /key/{key}`.
-- Global consistency temporarily degrades to `unknown` / `degraded`.
-- When Node B recovers, Node A's background retry loop automatically converges all pending writes and deletions without requiring client re-submissions.
+### 2. Consistency-gated context compaction
 
-### 4. Tombstone watermarks against out-of-order packet delivery
-In distributed networks, delayed replication packets can arrive after a key was deleted. PagerKV enforces versioned tombstone watermarks:
-- Deleting key `x` at version 3 records a tombstone `x <= 3`.
-- Any delayed replication for version 3 or older is rejected as stale, preventing deleted keys from being resurrected.
+The active-context view uses a dirty-bit-style guard: a block is safe to page to
+its archive stub only after B acknowledges its exact current version.
+`SYNCED_ARCHIVED` and matching versions allow paging; `DIRTY_UNREPLICATED` and
+`PENDING_REPLICATION` do not establish a safe archive copy.
 
+With the default settings, dirty text stays full in the active prompt even if it
+exceeds the budget. Optional local spilling changes that view while retaining the
+text on A. The complete primary backing value is retained independently of paging.
+The **summary portion** of a stub has a 25-token budget; the full stub also includes
+its version, retrieval reference, and original token count, so it is longer.
+
+### 3. Availability during replica failure
+
+The failure demo verifies that A can accept local writes and serve full local
+reads while B rejects data requests. Global consistency becomes unknown, and
+acknowledged copies can converge through retries after B recovers. The HTTP 503
+simulation illustrates availability versus replica consistency; it does not prove
+a formal CAP classification or arbitrary network-partition tolerance. The system
+has no automatic primary failover or consensus protocol.
+
+### 4. Deletion watermarks and content integrity
+
+B records versioned deletion watermarks. A delayed replication at or below a
+key's deletion watermark is rejected, preventing old text from restoring a
+settled deletion. Newer versions may be accepted.
+
+The SHA-256 check validates that the returned acknowledgment describes the
+expected payload. It is a content-integrity check, not a digital signature or
+client/server authentication mechanism.
 
 ## Replication, paging, and hydration
 
@@ -191,16 +212,7 @@ For an application-only installation, install `requirements.txt` instead.
 Both services bind to localhost. Press **Ctrl+C** to stop the launcher and both
 nodes. Their persisted data remains available for the next run.
 
-<details>
-<summary>Use the existing virtual environment in the parent directory</summary>
 
-If the workspace already has `DS/.venv`, run from `DS/pagerkv`:
-
-```bash
-PYTHON="../.venv/bin/python" bash scripts/run_nodes.sh
-```
-
-</details>
 
 <details>
 <summary>Start the nodes in separate terminals</summary>
@@ -231,24 +243,52 @@ Open the same dashboard URL. Enter that token when the failure controls request
 it. Each container has its own named data volume; ports are published on localhost.
 Stop while retaining data with `docker compose down`.
 
+A timestamp-free recording walkthrough is available in [the video demo script](docs/VIDEO_DEMO_SCRIPT.md).
+
 ## Interactive CLI demonstration
 
-For evaluators who prefer terminal automation or running headless without a browser, PagerKV includes an interactive, zero-dependency CLI demonstration script:
+Start both services first. The CLI uses only Python's standard library; it needs
+no additional client dependencies beyond a Python interpreter. The running
+services still require the project's runtime dependencies.
 
 ```bash
-# Interactive mode (pauses between steps with explanations):
+# Interactive: pauses between steps and again at the stub before hydration.
 python demo.py
 
-# Fully automated non-interactive run:
+# Automated: all checks run, without waiting for Enter.
 python demo.py --auto --delay 0.5
+
+# Optional custom service URLs and recovery deadline.
+python demo.py --auto --delay 0 \
+  --node-a http://127.0.0.1:8001 --node-b http://127.0.0.1:8002 \
+  --recovery-timeout 30
 ```
 
-The script exercises the complete 5-phase lifecycle against real running services:
-1. **Ingest & Replicate:** Writes observation via `PUT /key`, verifies versioned SHA-256 replication acknowledgment on Node B.
-2. **Network Partition (Dirty-Bit Guard):** Injects Node B fault (`mode="down"`), writes updated key, verifies Node A returns HTTP 200 (AP availability) while locking eviction (`eviction_allowed=false`).
-3. **Local Read During Outage:** Reads the primary value from Node A's durable local store while Node B remains offline.
-4. **Self-Healing Recovery:** Brings Node B back online and verifies the background retry loop converges without manual intervention (`in_sync`).
-5. **Context Paging & Page Fault:** Ingests observations exceeding the window token budget, watches cold synced keys page to 25-token stubs, and triggers a live page fault (`GET /context/{key}?hydrate=true`) restoring the exact lossless text from Node B.
+If admin controls are protected, set `PAGERKV_ADMIN_TOKEN` in the CLI's environment
+to the same token configured on both services. It is sent only with admin
+requests and is not printed. B must already be Online when the CLI starts;
+an existing failure mode is left unchanged.
+
+The script verifies each phase against real HTTP responses:
+
+1. **Save and replicate:** create a unique sample key; compare B's full text,
+   version, and SHA-256 digest with the original value.
+2. **Fail B and update:** verify the requested down mode, accept a newer local
+   value, check dirty state and `eviction_allowed=false`, and check unknown consistency.
+3. **Read locally:** compare the exact value and version returned by A, requiring
+   the `LOCAL_STORE` source while B remains down.
+4. **Recover:** restore B and wait for the matching replica through background
+   retry, without submitting another PUT.
+5. **Page and hydrate:** observe an actual `PAGED_TO_NODE_B` stub, confirm both
+   stored originals remain complete, then require `L2_PAGE_FAULT` and exact text
+   and version equality on hydration. The actual token budget outcome is displayed.
+
+Each run owns a fresh `demo/cli_<uuid>/...` namespace, checks new keys are absent
+before writing, and removes only its generated keys. Cleanup attempts to restore
+B if this run changed its mode and verifies removal from both stores. A failed
+check or incomplete cleanup returns a nonzero exit code; interruption attempts
+cleanup and returns 130. Success is printed only after every phase and cleanup
+have passed. Unverified replica deletion is reported explicitly.
 
 ## Guided demonstration & web dashboard
 
