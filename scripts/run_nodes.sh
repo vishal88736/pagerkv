@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start Node B (L2 archive) on 8002 and Node A (L1 window) on 8001.
+# Start Node B (replica) on 8002 and Node A (primary) on 8001.
 # Run from anywhere; paths are resolved relative to this script.
 set -euo pipefail
 
@@ -19,6 +19,6 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-echo "Node B (L2) on http://127.0.0.1:8002"
-echo "Node A (L1) on http://127.0.0.1:8001"
-wait "$B_PID" "$A_PID"
+echo "Node B (replica) on http://127.0.0.1:8002"
+echo "Node A (primary) on http://127.0.0.1:8001"
+wait -n "$B_PID" "$A_PID"

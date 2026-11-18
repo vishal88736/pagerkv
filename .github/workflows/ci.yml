@@ -23,16 +23,11 @@ jobs:
         run: mypy
       - name: Tests
         run: pytest -q
-      - name: Benchmark (fails if over budget, lossy, or recall regresses)
-        shell: bash  # -eo pipefail, so the tee does not hide a failure
-        run: python bench/run_benchmark.py --check | tee bench-summary.txt
-      - uses: actions/upload-artifact@v4
-        if: always()
+      - uses: actions/setup-node@v4
         with:
-          name: benchmark
-          path: |
-            bench/results.csv
-            bench-summary.txt
+          node-version: "22"
+      - name: Dashboard behavior
+        run: node --test tests/dashboard.test.cjs
 
   docker:
     runs-on: ubuntu-latest

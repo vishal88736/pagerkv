@@ -1,1014 +1,114 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PagerKV Console</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PagerKV · Replicated Key-Value Store</title>
 <style>
-:root{
-  --bg:#08090b; --bg2:#0c1014; --panel:rgba(14,19,24,.82); --panel-solid:#0e1318;
-  --line:rgba(140,190,220,.10); --line2:rgba(140,190,220,.18);
-  --text:#e8eef2; --muted:#8a97a3; --dim:#56626d;
-  --c1:#8fd6f5; --c2:#3f9cc8; --c3:#1f5f80; --c4:#143c52;
-  --ok:#3ddc97; --warn:#f2b45a; --bad:#ff6b6b; --spill:#9f8cff;
-  --sans:"Manrope",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
-  --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
-}
-*{box-sizing:border-box}
-html,body{margin:0}
-body{
-  background:radial-gradient(1200px 700px at 70% 45%, #0f2230 0%, #0a1219 40%, var(--bg) 75%);
-  background-color:var(--bg); color:var(--text); font-family:var(--sans);
-  min-height:100vh; -webkit-font-smoothing:antialiased;
-}
-button,input,select,textarea{font:inherit;color:inherit}
-.mono{font-family:var(--mono)}
-
-/* ---------- top bar ---------- */
-.top{
-  display:flex; align-items:center; gap:14px; flex-wrap:wrap;
-  padding:18px 28px; border-bottom:1px solid var(--line);
-  background:linear-gradient(180deg, rgba(20,30,38,.85), rgba(12,17,22,.6));
-  backdrop-filter:blur(10px); position:sticky; top:0; z-index:20;
-}
-.brand{display:flex; align-items:center; gap:10px; font-weight:600; font-size:20px; margin-right:18px; letter-spacing:.2px}
-.pill{
-  display:flex; align-items:center; gap:10px; padding:10px 18px; border-radius:999px;
-  background:rgba(255,255,255,.035); border:1px solid var(--line); color:var(--muted);
-  font-size:14px; white-space:nowrap; position:relative;
-}
-.pill b{color:var(--text); font-weight:500}
-.pill svg{flex:none}
-.dot{width:8px;height:8px;border-radius:50%;background:var(--dim);box-shadow:0 0 0 3px rgba(255,255,255,.04)}
-.dot.ok{background:var(--ok);box-shadow:0 0 10px var(--ok)}
-.dot.bad{background:var(--bad);box-shadow:0 0 10px var(--bad)}
-.dot.warn{background:var(--warn);box-shadow:0 0 10px var(--warn)}
-.pill select{
-  appearance:none; background:transparent; border:0; color:var(--text); font-weight:500;
-  padding-right:18px; cursor:pointer; outline:none;
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238a97a3' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-  background-repeat:no-repeat; background-position:right center;
-}
-.pill select option{background:var(--panel-solid)}
-.spacer{flex:1}
-.live{font-size:12px; color:var(--dim); display:flex; align-items:center; gap:8px}
-
-/* ---------- stage ---------- */
-.stage{position:relative; display:grid; grid-template-columns:300px 1fr; gap:24px; padding:28px; min-height:640px}
-.stats{display:flex; flex-direction:column; gap:16px; z-index:2}
-.card{
-  background:var(--panel); border:1px solid var(--line); padding:22px 24px;
-  backdrop-filter:blur(6px);
-}
-.card h3{margin:0; display:flex; align-items:center; gap:12px; font-size:15px; font-weight:500; color:var(--text)}
-.card h3 svg{color:var(--muted)}
-.big{font-size:44px; font-weight:300; letter-spacing:-.5px; margin:14px 0 0 32px; font-variant-numeric:tabular-nums}
-.big small{font-size:18px; color:var(--muted); font-weight:400; margin-left:4px}
-.chip{display:inline-flex; align-items:center; gap:6px; margin:12px 0 0 32px; padding:4px 10px; border-radius:999px; font-size:13px; font-variant-numeric:tabular-nums}
-.chip.ok{color:var(--ok); background:rgba(61,220,151,.09)}
-.chip.warn{color:var(--warn); background:rgba(242,180,90,.10)}
-.chip.bad{color:var(--bad); background:rgba(255,107,107,.10)}
-.chip.mut{color:var(--muted); background:rgba(255,255,255,.04)}
-
-.viz{position:relative; min-height:600px}
-.viz svg#iso{position:absolute; inset:0; width:100%; height:100%}
-.floor-label{font-family:var(--mono); font-size:11px; letter-spacing:1.5px; fill:var(--muted)}
-.blk{cursor:pointer; transition:opacity .25s}
-.blk:hover{filter:brightness(1.35)}
-.blk.sel{filter:brightness(1.6) drop-shadow(0 0 6px var(--c1))}
-
-/* composition panel (the "Network Traffic" analogue) */
-.comp{
-  position:absolute; left:0; bottom:0; width:min(560px,100%); z-index:3;
-  background:linear-gradient(115deg, rgba(14,20,26,.94) 0%, rgba(18,44,60,.88) 60%, rgba(30,80,108,.7) 100%);
-  border:1px solid var(--line2); padding:26px 30px 24px;
-}
-.comp h3{margin:0 0 22px; font-weight:500; font-size:17px}
-.seg{display:flex; height:120px; position:relative}
-.seg > div{position:relative; display:flex; flex-direction:column; justify-content:space-between; min-width:0; transition:flex-basis .5s ease}
-.seg .pct{font-size:34px; font-weight:300; padding:0 0 0 12px; border-left:1.5px solid currentColor; height:58px; line-height:46px; white-space:nowrap; overflow:hidden}
-.seg .bars{height:62px}
-.hatch{background-image:repeating-linear-gradient(90deg, currentColor 0 2px, transparent 2px 4px)}
-.budget{margin-top:14px; height:28px; position:relative; color:rgba(140,190,220,.22)}
-.budget .fill{position:absolute; inset:0 auto 0 0; color:var(--c2); opacity:.55; transition:width .5s ease}
-.budget .cap{position:absolute; top:-4px; bottom:-4px; width:1.5px; background:var(--bad); right:0}
-.budget-row{display:flex; justify-content:space-between; font-size:12px; color:var(--muted); margin-top:8px; font-variant-numeric:tabular-nums}
-.legend{margin-top:20px; display:flex; flex-direction:column; gap:12px}
-.legend div{display:flex; align-items:center; gap:12px; font-size:15px; color:#c5d0d8}
-.legend i{width:10px;height:10px;border-radius:50%;flex:none}
-.legend .lead{flex:1; border-bottom:1px dotted rgba(255,255,255,.18); transform:translateY(-3px)}
-.legend b{font-weight:500; color:var(--text); font-variant-numeric:tabular-nums; min-width:46px; text-align:right}
-
-.tip{
-  position:fixed; pointer-events:none; z-index:50; background:rgba(10,14,18,.96); border:1px solid var(--line2);
-  padding:10px 12px; font-size:12px; line-height:1.55; min-width:200px; display:none;
-}
-.tip .k{font-family:var(--mono); color:var(--c1); margin-bottom:4px}
-.tip .r{display:flex; justify-content:space-between; gap:16px; color:var(--muted)}
-.tip .r span:last-child{color:var(--text)}
-
-/* Replication activity is driven by requests and observed acknowledgments. */
-.transfer{margin:18px 28px 0;padding:18px 24px;background:var(--panel);border:1px solid var(--line2)}
-.transfer-head,.transfer-track{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
-.transfer-head{justify-content:space-between;margin-bottom:16px;font-size:13px}
-.transfer-head strong{font-weight:500}.transfer-head span{color:var(--muted)}
-.transfer-node{border:1px solid var(--line2);padding:12px 18px;font-family:var(--mono);font-size:12px}
-.transfer-wire{flex:1;min-width:80px;height:32px;position:relative;overflow:hidden}
-.transfer-wire:before{content:"";position:absolute;left:0;right:0;top:15px;border-top:1px dashed var(--dim)}
-.transfer-packet{position:absolute;top:7px;left:0;width:32px;height:18px;border-radius:4px;background:var(--c1);opacity:0}
-.transfer[data-state="ok"] .transfer-node:last-child{border-color:var(--ok);color:var(--ok)}
-.transfer[data-state="bad"] .transfer-node:last-child{border-color:var(--bad);color:var(--bad)}
-.transfer-detail{font-family:var(--mono);font-size:12px;color:var(--muted);margin-top:12px;overflow-wrap:anywhere}
-@media(max-width:640px){.transfer{margin:16px 16px 0;padding:16px}.transfer-node{padding:10px}}
-
-/* ---------- lower panels ---------- */
-.lower{display:grid; grid-template-columns:1.5fr 1fr; gap:24px; padding:0 28px 40px; align-items:start}
-.panel{background:var(--panel); border:1px solid var(--line); padding:22px 24px; min-width:0}
-.panel h3{margin:0 0 16px; font-size:15px; font-weight:500; display:flex; align-items:center; gap:10px}
-.panel h3 .sub{color:var(--dim); font-weight:400; font-size:13px; margin-left:auto}
-.tbl-wrap{overflow:auto; max-height:min(760px, 80vh)}
-table{width:100%; border-collapse:collapse; font-size:13px}
-th{text-align:left; font-weight:500; color:var(--dim); font-size:11px; letter-spacing:1px; text-transform:uppercase; padding:8px 10px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--panel-solid)}
-td{padding:9px 10px; border-bottom:1px solid rgba(255,255,255,.035); font-variant-numeric:tabular-nums; white-space:nowrap}
-tr.row{cursor:pointer}
-tr.row:hover td{background:rgba(143,214,245,.04)}
-tr.row.sel td{background:rgba(143,214,245,.08)}
-td.key{font-family:var(--mono); color:var(--c1); max-width:220px; overflow:hidden; text-overflow:ellipsis}
-.tag{font-size:11px; padding:2px 8px; border-radius:999px; font-family:var(--mono)}
-.tag.res{color:var(--c1); background:rgba(143,214,245,.08)}
-.tag.pg{color:var(--muted); background:rgba(255,255,255,.04)}
-.tag.ok{color:var(--ok); background:rgba(61,220,151,.08)}
-.tag.dirty{color:var(--warn); background:rgba(242,180,90,.10)}
-.tag.pend{color:#dfe7ec; background:rgba(223,231,236,.08)}
-.tag.spill{color:var(--spill); background:rgba(159,140,255,.10)}
-.tag.pin{color:var(--c1); border:1px solid rgba(143,214,245,.35); background:transparent}
-.lock{color:var(--warn)}
-.empty{color:var(--dim); font-size:13px; padding:24px 0; text-align:center}
-
-.field{display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px}
-.field input,.field textarea{
-  flex:1; background:rgba(0,0,0,.3); border:1px solid var(--line2); padding:10px 12px; outline:none; min-width:0;
-}
-.field textarea{min-height:76px; resize:vertical; font-family:var(--mono); font-size:12px}
-.field input:focus,.field textarea:focus{border-color:var(--c2)}
-.btn{background:rgba(63,156,200,.14); border:1px solid rgba(63,156,200,.45); color:var(--c1); padding:9px 16px; cursor:pointer; white-space:nowrap}
-.btn:hover{background:rgba(63,156,200,.24)}
-.btn.ghost{background:transparent; border-color:var(--line2); color:var(--muted)}
-.btn.danger{border-color:rgba(255,107,107,.4); color:var(--bad); background:rgba(255,107,107,.06)}
-.btn:disabled{opacity:.4; cursor:default}
-.side{display:flex; flex-direction:column; gap:24px; min-width:0}
-pre.out{margin:0; background:rgba(0,0,0,.35); border:1px solid var(--line); padding:12px; font-family:var(--mono); font-size:11.5px; line-height:1.55; color:#b9c6cf; max-height:260px; overflow:auto; white-space:pre-wrap; word-break:break-word}
-.detail-meta{display:grid; grid-template-columns:1fr 1fr; gap:6px 16px; font-size:12px; margin-bottom:12px}
-.detail-meta span{color:var(--dim)}
-.detail-meta b{font-weight:500; font-variant-numeric:tabular-nums}
-.res-list{display:flex; flex-direction:column; gap:6px; margin-top:4px}
-.res-list div{display:flex; justify-content:space-between; font-size:12.5px; padding:6px 8px; background:rgba(255,255,255,.02); cursor:pointer}
-.res-list div:hover{background:rgba(143,214,245,.06)}
-.res-list .k{font-family:var(--mono); color:var(--c1); overflow:hidden; text-overflow:ellipsis}
-.toast{position:fixed; right:20px; bottom:20px; z-index:60; background:var(--panel-solid); border:1px solid var(--line2); padding:12px 16px; font-size:13px; transform:translateY(120%); transition:transform .25s}
-.toast.show{transform:none}
-.banner{display:none; margin:16px 28px 0; padding:12px 16px; border:1px solid rgba(255,107,107,.35); background:rgba(255,107,107,.07); color:#ffb3b3; font-size:13px}
-
-.timeline{padding:0 28px 24px}
-.tabs{display:inline-flex; gap:4px; margin-left:14px}
-.tab{background:transparent; border:1px solid var(--line2); color:var(--muted); padding:4px 12px; font-size:12px; cursor:pointer; white-space:nowrap}
-.tab.on{color:var(--c1); border-color:rgba(63,156,200,.6); background:rgba(63,156,200,.12)}
-svg.chart{display:block; width:100%; height:220px}
-.chart-legend{display:flex; flex-wrap:wrap; gap:18px; font-size:12px; color:var(--muted); margin-top:10px}
-.chart-legend i{display:inline-block; width:14px; height:3px; vertical-align:middle; margin-right:6px}
-.axis{font-family:var(--mono); font-size:10px; fill:var(--dim)}
-.replay-ctl{display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px}
-.replay-ctl input[type=range]{flex:1; min-width:160px; accent-color:#3f9cc8}
-.replay-info{font-family:var(--mono); font-size:12px; color:var(--muted)}
-.log{display:flex; flex-direction:column; gap:2px; max-height:260px; overflow:auto; font-size:12px}
-.log div{display:grid; grid-template-columns:64px 1fr; gap:10px; padding:5px 6px; border-bottom:1px solid rgba(255,255,255,.03)}
-.log time{font-family:var(--mono); color:var(--dim)}
-.log .k{font-family:var(--mono); color:var(--c1)}
-.log .warn{color:var(--warn)} .log .bad{color:var(--bad)} .log .ok{color:var(--ok)} .log .spill{color:var(--spill)}
-.prio{display:flex; align-items:center; gap:6px; color:var(--muted); font-size:13px}
-.prio input{width:70px; background:rgba(0,0,0,.3); border:1px solid var(--line2); padding:8px; outline:none}
-
-@media (max-width:1100px){
-  .stage{grid-template-columns:1fr}
-  .viz{min-height:0}
-  .viz svg#iso{position:relative; display:block; height:640px}
-  .comp{position:relative; width:100%}
-  .stats{flex-direction:row; flex-wrap:wrap}
-  .stats .card{flex:1 1 220px}
-  .lower{grid-template-columns:1fr}
-}
-@media (max-width:640px){
-  .top{padding:12px 16px}
-  .stage{padding:16px; gap:16px}
-  .lower{padding:0 16px 24px}
-  .timeline{padding:0 16px 16px}
-  .timeline h3{flex-wrap:wrap}
-  .timeline h3 .sub{flex-basis:100%; margin-left:0}
-  .tabs{margin-left:auto}
-  .viz svg#iso{height:520px}
-  .comp{padding:20px}
-  .seg .pct{font-size:24px}
-  .big{font-size:34px}
-  .banner{margin:12px 16px 0}
-}
+:root{color-scheme:dark;--bg:#0a111b;--panel:#111e2e;--line:#2a3e55;--text:#edf4fc;--muted:#a0b3c9;--blue:#86cfff;--ok:#63e4ac;--bad:#ff9b9b;--warn:#ffd18a}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at top right,#183147,var(--bg) 65%);color:var(--text);font:15px/1.55 system-ui,sans-serif;min-height:100vh}main{max-width:1600px;margin:auto;padding:28px 36px 48px}header{display:flex;justify-content:space-between;align-items:center;gap:20px;flex-wrap:wrap;margin-bottom:24px}h1{font-size:27px;margin:0}h2{font-size:18px;margin:0 0 12px}p{color:var(--muted);margin:6px 0}a{color:var(--blue)}.eyebrow{letter-spacing:2px;font-size:11px;color:var(--blue);text-transform:uppercase}.badge{border:1px solid var(--line);padding:7px 13px;border-radius:20px;font-size:13px}.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}.muted{color:var(--muted)}.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px}.panel,.stat{border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:22px;min-width:0}.stat span{display:block;color:var(--muted);font-size:12px}.stat strong{display:block;font-size:29px;font-weight:550}.flow{margin-bottom:20px}.flow-head{display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap}.track{display:flex;align-items:center;gap:16px;margin:22px 0}.node{border:1px solid var(--line);padding:16px 22px;border-radius:8px;flex:none}.node b,.node small{display:block}.node small{color:var(--muted)}.wire{height:40px;flex:1;position:relative;overflow:hidden}.wire:before{content:"";position:absolute;top:19px;left:0;right:0;border-top:1px dashed var(--muted)}.packet{position:absolute;top:9px;width:32px;height:22px;border-radius:4px;background:var(--blue);opacity:0}.flow[data-state="ok"] .node:last-child{border-color:var(--ok)}.flow[data-state="bad"] .node:last-child{border-color:var(--bad)}#activity{font-family:ui-monospace,monospace;font-size:13px;overflow-wrap:anywhere;min-height:40px}.controls{display:grid;grid-template-columns:1.35fr 1fr;gap:20px;margin-bottom:20px}label{display:block;font-size:13px;color:var(--muted);margin-bottom:8px}input,textarea,select,button{font:inherit;color:var(--text)}input,textarea,select{width:100%;border:1px solid var(--line);border-radius:6px;padding:10px;background:#0a1522}textarea{resize:vertical;min-height:90px;font-family:ui-monospace,monospace}input:focus-visible,textarea:focus-visible,button:focus-visible,select:focus-visible{outline:2px solid var(--blue);outline-offset:3px}.field{margin-bottom:14px}.actions{display:flex;gap:8px;flex-wrap:wrap}button{cursor:pointer;background:#214d6c;border:1px solid #437b9f;border-radius:6px;padding:9px 15px}button:hover{filter:brightness(1.18)}button.secondary{background:transparent;border-color:var(--line)}button.danger{background:#402b35;border-color:#87535f}button:disabled{opacity:.5;cursor:wait}.hint{font-size:12px;color:var(--muted);margin-top:12px}.nodes{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px}.table-wrap{overflow:auto;max-height:440px}table{width:100%;border-collapse:collapse;text-align:left;font-size:13px}th{color:var(--muted);font-weight:500;position:sticky;top:0;background:var(--panel)}td,th{padding:12px 10px;border-bottom:1px solid var(--line);vertical-align:top}td.value{max-width:280px;white-space:pre-wrap;overflow-wrap:anywhere}td.key{max-width:170px;overflow-wrap:anywhere;font-family:ui-monospace,monospace}td button{font-size:12px;padding:3px 8px}pre{padding:14px;border-radius:6px;background:#09131f;white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow:auto;font-size:12px}.bottom{display:grid;grid-template-columns:1fr 1fr;gap:20px}.log{max-height:260px;overflow:auto;font-size:13px}.event{padding:8px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}.event time{font-size:11px;color:var(--muted);margin-right:12px}#banner{border:1px solid var(--bad);padding:12px;border-radius:6px;color:var(--bad);margin-bottom:20px}#banner[hidden]{display:none}.live{font-size:12px;color:var(--muted)}@media(max-width:850px){main{padding:20px}.cards{grid-template-columns:repeat(2,1fr)}.controls,.nodes,.bottom{grid-template-columns:1fr}.node{padding:12px}.track{gap:8px}}@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
 </style>
 </head>
-<body>
-
-<header class="top">
-  <div class="brand">
-    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5" opacity=".55"/><rect x="3" y="14" width="7" height="7" rx="1.5" opacity=".55"/><rect x="14" y="14" width="7" height="7" rx="1.5" opacity=".3"/></svg>
-    PagerKV
-  </div>
-  <div class="pill" title="Node A (L1) health">
-    <span class="dot" id="dotA"></span>Node A: <b id="pillA">connecting…</b>
-  </div>
-  <div class="pill" title="Node B (L2) fault-injection mode">
-    <span class="dot" id="dotB"></span>Node B:
-    <select id="faultSel" aria-label="Node B fault mode">
-      <option value="none">Online</option>
-      <option value="slow">Slow (3s)</option>
-      <option value="down">Down</option>
-    </select>
-  </div>
-  <div class="pill" title="Active window tokens / budget">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>
-    Window: <b id="pillWin">–</b>
-  </div>
-  <div class="pill" title="Keys resident in L1 / paged to L2">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg>
-    Keys: <b id="pillKeys">–</b>
-  </div>
-  <div class="spacer"></div>
-  <div class="live"><span class="dot" id="dotLive"></span><span id="liveTxt">polling</span></div>
-</header>
-
-<div class="banner" id="banner"></div>
-
-<section class="transfer" id="transfer" data-state="idle" aria-label="Replication activity">
-  <div class="transfer-head"><strong>Node replication · A → B</strong><span id="transferCounts">Waiting for node status…</span></div>
-  <div class="transfer-track"><div class="transfer-node">Node A · original</div><div class="transfer-wire"><div class="transfer-packet" id="transferPacket"></div></div><div class="transfer-node">Node B · copy</div></div>
-  <div class="transfer-detail" id="transferDetail" role="status" aria-live="polite">Write a key to see it copied. Animations illustrate requests and acknowledgments observed by this dashboard.</div>
-</section>
-
-<section class="stage">
-  <div class="stats">
-    <div class="card">
-      <h3><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 7h16M4 12h10M4 17h6"/></svg>Active Window</h3>
-      <div class="big" id="sWin">–</div>
-      <div class="chip mut" id="sWinChip">–</div>
-    </div>
-    <div class="card">
-      <h3><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>Page Faults</h3>
-      <div class="big" id="sPf">–</div>
-      <div class="chip mut" id="sPfChip">since start</div>
-    </div>
-    <div class="card">
-      <h3><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Tokens Saved</h3>
-      <div class="big" id="sSaved">–</div>
-      <div class="chip ok" id="sSavedChip">by replication</div>
-    </div>
-    <div class="card">
-      <h3><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Dirty Keys</h3>
-      <div class="big" id="sDirty">–</div>
-      <div class="chip mut" id="sDirtyChip">eviction blocked</div>
-    </div>
-  </div>
-
-  <div class="viz" id="viz">
-    <svg id="iso" role="img" aria-label="Isometric view of L1 window and L2 archive"></svg>
-    <div class="comp" id="comp">
-      <h3>Window Composition</h3>
-      <div class="seg" id="seg"></div>
-      <div class="budget hatch"><div class="fill hatch" id="budgetFill"></div><div class="cap"></div></div>
-      <div class="budget-row"><span id="budgetL">0 tokens</span><span id="budgetR">budget –</span></div>
-      <div class="legend" id="legend"></div>
-    </div>
-  </div>
-</section>
-
-<section class="timeline">
-  <div class="panel">
-    <h3>Timeline
-      <span class="tabs" role="tablist">
-        <button class="tab on" data-tab="live" role="tab">Live</button>
-        <button class="tab" data-tab="replay" role="tab">Benchmark replay</button>
-      </span>
-      <span class="sub" id="tlSub"></span>
-    </h3>
-    <div id="tlLive">
-      <svg id="liveChart" class="chart" role="img" aria-label="Window tokens over time"></svg>
-      <div class="chart-legend">
-        <span><i style="background:var(--c1)"></i>window tokens</span>
-        <span><i style="background:var(--bad);height:1px"></i>budget</span>
-        <span><i style="background:var(--warn);width:3px;height:10px"></i>page fault</span>
-        <span><i style="background:var(--spill);height:8px;opacity:.6"></i>dirty / spilled keys</span>
-      </div>
-    </div>
-    <div id="tlReplay" hidden>
-      <div class="replay-ctl">
-        <button class="btn" id="btnPlay">Play</button>
-        <input type="range" id="replaySlider" min="1" max="100" value="100" aria-label="Benchmark turn">
-        <span class="replay-info" id="replayInfo"></span>
-      </div>
-      <svg id="replayChart" class="chart" role="img" aria-label="Benchmark replay"></svg>
-      <div class="chart-legend">
-        <span><i style="background:#ff8a8a"></i>baseline agent (no pager)</span>
-        <span><i style="background:var(--c1)"></i>PagerKV prompt</span>
-        <span><i style="background:var(--bad);height:1px"></i>budget</span>
-        <span><i style="background:rgba(255,107,107,.25);height:10px"></i>Node B down</span>
-        <span><i style="background:var(--spill);height:8px;opacity:.6"></i>spilled keys</span>
-      </div>
-    </div>
-  </div>
-</section>
-
-<section class="lower">
-  <div class="panel">
-    <h3>Context Keys <span class="sub" id="keyCount"></span></h3>
-    <div class="tbl-wrap">
-      <table>
-        <thead><tr><th>Key</th><th>Ver</th><th>Residence</th><th>Consistency</th><th>L1 tok</th><th>Full tok</th><th>Policy</th><th></th></tr></thead>
-        <tbody id="rows"></tbody>
-      </table>
-      <div class="empty" id="emptyRows">No keys yet. Write one with the form on the right.</div>
-    </div>
-  </div>
-
-  <div class="side">
-    <div class="panel">
-      <h3>Inspect <span class="sub" id="selKey">select a key</span></h3>
-      <div class="detail-meta" id="detailMeta"></div>
-      <div class="field">
-        <button class="btn" id="btnHydrate" disabled>Page in (hydrate)</button>
-        <button class="btn ghost" id="btnView" disabled>View L1</button>
-        <button class="btn danger" id="btnDelete" disabled>Delete</button>
-      </div>
-      <div class="field">
-        <button class="btn ghost" id="btnPin" disabled>Pin</button>
-        <label class="prio">priority <input type="number" id="prio" min="-100" max="100" value="0" disabled></label>
-        <button class="btn ghost" id="btnPrio" disabled>Set priority</button>
-      </div>
-      <pre class="out" id="detailOut">—</pre>
-    </div>
-
-    <div class="panel">
-      <h3>Write Context</h3>
-      <div class="field"><input id="putKey" placeholder="key, e.g. obs/turn-041" autocomplete="off"></div>
-      <div class="field"><textarea id="putText" placeholder="observation text…"></textarea></div>
-      <div class="field"><button class="btn" id="btnPut">PUT /context/{key}</button></div>
-    </div>
-
-    <div class="panel">
-      <h3>Search Archive</h3>
-      <div class="field"><input id="q" placeholder="search L1 keys + L2 full text" autocomplete="off"><button class="btn" id="btnSearch">Search</button></div>
-      <div class="res-list" id="results"></div>
-    </div>
-
-    <div class="panel">
-      <h3>Event Log <span class="sub" id="logCount"></span></h3>
-      <div class="log" id="log"><div><time></time><span style="color:var(--dim)">waiting for changes…</span></div></div>
-    </div>
-
-    <div class="panel">
-      <h3>Rendered Prompt <span class="sub" id="promptTok"></span></h3>
-      <pre class="out" id="prompt">—</pre>
-    </div>
-  </div>
-</section>
-
-<div class="tip" id="tip"></div>
-<div class="toast" id="toast"></div>
-
+<body><main>
+<header><div><div class="eyebrow">REST · HTTP verbs · replication · consistency</div><h1>PagerKV</h1><p>A mini distributed key-value store with two complete copies.</p></div><div><span class="badge" id="consistency">Connecting…</span><p class="live" id="live">Waiting for node status</p></div></header>
+<div id="banner" role="alert" hidden></div>
+<section class="cards" aria-label="Replication summary"><div class="stat"><span>Keys on Node A</span><strong id="keyCount">—</strong></div><div class="stat"><span>Successful replication attempts</span><strong id="successCount">—</strong></div><div class="stat"><span>Failed replication attempts</span><strong id="failureCount">—</strong></div><div class="stat"><span>Pending writes / deletes</span><strong id="pendingCount">—</strong></div></section>
+<section class="panel flow" id="flow" data-state="idle"><div class="flow-head"><h2>Watch a value replicate</h2><span class="muted">PUT on A → HTTP call → copy on B</span></div><div class="track"><div class="node"><b>Node A</b><small>Primary · full value</small></div><div class="wire"><div class="packet" id="packet" aria-hidden="true"></div></div><div class="node"><b>Node B</b><small>Replica · full value</small></div></div><div id="activity" role="status" aria-live="polite">Write a key below. The animation illustrates requests and acknowledgments observed by this dashboard.</div></section>
+<div class="controls"><section class="panel"><h2>Read and write a key</h2><form id="writeForm"><div class="field"><label for="key">Key</label><input id="key" required maxlength="512" placeholder="e.g. city" autocomplete="off"></div><div class="field"><label for="value">Value (string; empty values are allowed)</label><textarea id="value" maxlength="1000000" placeholder="e.g. Bhilai"></textarea></div><div class="actions"><button id="put" type="submit">PUT · save & replicate</button><button id="get" type="button" class="secondary">GET · read from A</button><button id="delete" type="button" class="danger">DELETE · both nodes</button></div></form><p class="hint">Every PUT keeps the full value on A and attempts replication to B. Failed copies are retried automatically.</p></section>
+<section class="panel"><h2>Simulate Node B failures</h2><div class="field"><label for="fault">Node B mode</label><select id="fault"><option value="none">Online</option><option value="slow">Slow · 3 seconds (request timeout: 2s by default)</option><option value="down">Down · reject data requests</option></select></div><button id="applyFault">Apply mode</button><p class="hint">Try: Down → PUT a value → read it from A → Online → watch the copy recover. This simulates failures; the Node B process stays running.</p><p id="faultState" class="muted">Fault mode not yet checked.</p><p class="hint">Consistency is a live comparison of full values, versions and deletion records. “Unknown” means B could not be checked. Pending writes remain durable on A.</p><a href="/docs" target="_blank" rel="noopener">Explore the REST API ↗</a></section></div>
+<div class="nodes"><section class="panel"><h2>Node A · primary values</h2><div class="table-wrap"><table><thead><tr><th>Key</th><th>Value</th><th>Version</th><th>Replication</th><th></th></tr></thead><tbody id="rowsA"><tr><td colspan="5">Waiting for Node A…</td></tr></tbody></table></div></section><section class="panel"><h2>Node B · replicated values</h2><div class="table-wrap"><table><thead><tr><th>Key</th><th>Value</th><th>Version</th></tr></thead><tbody id="rowsB"><tr><td colspan="3">Waiting for Node B…</td></tr></tbody></table></div><p class="hint" id="copyNote">Both nodes retain complete values. Deleted keys leave versioned deletion records to prevent delayed writes from restoring them.</p></section></div>
+<div class="bottom"><section class="panel"><h2>HTTP response</h2><pre id="response" role="status">No request yet.</pre></section><section class="panel"><h2>Activity log</h2><div class="log" id="log"><p>Waiting for activity…</p></div></section></div>
+</main>
 <script>
 (() => {
   const $ = id => document.getElementById(id);
-  const fmt = n => (n == null ? "–" : Number(n).toLocaleString());
-  const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-  const enc = k => encodeURIComponent(k);
-  const POLL_MS = 1500;
-
-  let status = null, selected = null, faultMode = "none", busy = false, faultLocked = false;
-  let transferAnimation = null, activeWrite = null;
-  let adminToken = "";
-  try { adminToken = localStorage.getItem("pagerkv.adminToken") || ""; } catch { /* storage unavailable */ }
-  const hist = [];          // live samples for the timeline
-  const events = [];        // event log, newest first
-
-  function toast(msg, bad) {
-    const t = $("toast"); t.textContent = msg; t.style.borderColor = bad ? "rgba(255,107,107,.5)" : "";
-    t.classList.add("show"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 2600);
+  const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  let snapshot = null, polling = false, writing = false, animation = null, token = '';
+  const events = [];
+  function log(message, kind = '') {
+    events.unshift({message, kind, time: new Date().toLocaleTimeString()}); events.length = Math.min(events.length, 60);
+    $('log').innerHTML = events.map(e => `<div class="event ${e.kind}"><time>${esc(e.time)}</time>${esc(e.message)}</div>`).join('');
   }
-
-  async function api(path, opts = {}) {
-    const headers = { "content-type": "application/json" };
-    if (adminToken && path.startsWith("/admin/")) headers["X-Admin-Token"] = adminToken;
-    let r;
-    try { r = await fetch(path, { ...opts, headers: { ...headers, ...opts.headers }, signal: AbortSignal.timeout(6000) }); }
-    catch { return { ok: false, status: 0, body: { error: "Request failed or timed out" } }; }
-    let body = null;
-    try { body = await r.json(); } catch { /* 204 or non-json */ }
-    return { ok: r.ok, status: r.status, body };
+  async function api(path, options = {}) {
+    try {
+      const headers = {'content-type':'application/json'};
+      if (token && path.startsWith('/admin/')) headers['X-Admin-Token'] = token;
+      const response = await fetch(path, {...options, headers, signal: AbortSignal.timeout(12000)});
+      const body = await response.json();
+      return {ok: response.ok, status: response.status, body};
+    } catch (error) { return {ok: false, status: 0, body: {error: 'Connection failed or request timed out. Write outcome may be unknown; check status before retrying.'}}; }
   }
-
-  // ------------------------------------------------------------ polling
+  function animate(state, message) {
+    $('flow').dataset.state = state; $('activity').textContent = message;
+    if (animation) animation.cancel();
+    if (state === 'idle' || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const end = Math.max(0, $('packet').parentElement.clientWidth - 32) * (state === 'bad' ? .45 : 1);
+    $('packet').style.background = state === 'ok' ? 'var(--ok)' : state === 'bad' ? 'var(--bad)' : 'var(--blue)';
+    animation = $('packet').animate([{transform:'translateX(0)',opacity:0},{opacity:1,offset:.1},{transform:`translateX(${end}px)`,opacity:1,offset:.85},{transform:`translateX(${end}px)`,opacity:0}],{duration:1700,iterations:state === 'pending' ? Infinity : 1});
+  }
+  const liveRows = rows => Object.values(rows || {}).filter(row => !row.deleted);
+  function render(data) {
+    const labels = {in_sync:'In sync', pending:'Pending replication', diverged:'Diverged', unknown:'Unknown · B unavailable'};
+    $('consistency').textContent = labels[data.consistency] || 'Unknown';
+    $('consistency').className = 'badge ' + (data.consistency === 'in_sync' ? 'ok' : data.consistency === 'pending' ? 'warn' : 'bad');
+    $('keyCount').textContent = liveRows(data.node_a).length;
+    $('successCount').textContent = data.replication.succeeded; $('failureCount').textContent = data.replication.failed; $('pendingCount').textContent = data.pending;
+    $('rowsA').innerHTML = liveRows(data.node_a).map(row => `<tr><td class="key">${esc(row.key)}</td><td class="value">${esc(row.value)}</td><td>v${row.version}</td><td class="${row.version === row.acked_version ? 'ok' : 'warn'}" title="${esc(row.error || '')}">${row.version === row.acked_version ? 'Acknowledged' : 'Pending / failed'}</td><td><button class="secondary" data-key="${esc(row.key)}">Select</button></td></tr>`).join('') || '<tr><td colspan="5" class="muted">No keys. Write your first value above.</td></tr>';
+    $('rowsB').innerHTML = data.node_b === null ? '<tr><td colspan="3" class="bad">Unavailable — replica contents cannot be verified.</td></tr>' : liveRows(data.node_b).map(row => `<tr><td class="key">${esc(row.key)}</td><td class="value">${esc(row.value)}</td><td>v${row.version}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">No replicated keys yet.</td></tr>';
+    $('copyNote').textContent = data.node_b === null ? 'No current snapshot of B is available. A keeps serving its full values.' : 'Live comparison includes versioned deletion records, hidden from these value tables.';
+    $('live').textContent = 'Updated ' + new Date().toLocaleTimeString() + ' · checks every 2s';
+    if (snapshot && !writing) {
+      const copied = Object.values(data.node_a).filter(row => row.acked_version === row.version && row.acked_version !== snapshot.node_a[row.key]?.acked_version);
+      if (copied.length) { const text = `${copied.length} ${copied.length === 1 ? 'update' : 'updates'} acknowledged by Node B: ${copied.slice(0,3).map(row => row.key + ' v' + row.version).join(', ')}`; animate('ok',text); log(text,'ok'); }
+      if (data.consistency !== snapshot.consistency) log('Consistency: ' + labels[data.consistency], data.consistency === 'in_sync' ? 'ok' : 'warn');
+    }
+    snapshot = data;
+  }
   async function poll() {
-    if (busy) return;
-    busy = true;
+    if (polling) return;
+    polling = true;
     try {
-      const [h, s, f] = await Promise.all([
-        api("/health"), api("/context/status?include_text=false"), api("/admin/node_b/fault")
-      ]);
-      if (!h.ok || !s.ok || !s.body?.keys) throw new Error("Node A status unavailable");
-      $("dotLive").className = "dot ok"; $("liveTxt").textContent = "live · " + new Date().toLocaleTimeString();
-      $("banner").style.display = "none";
-      const bUp = !!(h.body && (h.body.node_b_ready ?? h.body.node_b_reachable));
-      $("dotA").className = "dot ok"; $("pillA").textContent = "Online";
-      faultLocked = f.status === 403;
-      const prevMode = faultMode;
-      if (f.ok && f.body) faultMode = f.body.mode;
-      else if (!faultLocked) faultMode = "down";
-      else faultMode = bUp ? "none" : "down";
-      if (prevMode !== faultMode && status) logEvent(faultMode === "none" ? "ok" : "bad", `Node B → ${faultMode}`);
-      $("faultSel").title = faultLocked ? "Locked: needs an admin token (click to enter one)" : "";
-      if (document.activeElement !== $("faultSel")) $("faultSel").value = faultMode;
-      const bState = faultMode === "down" ? "bad" : faultMode === "slow" ? "warn" : bUp ? "ok" : "bad";
-      $("dotB").className = "dot " + bState;
-      if (s.ok) {
-        if (status) diffEvents(status, s.body);
-        observeReplication(status, s.body);
-        status = s.body;
-        sample(status);
-        render();
-      }
-    } catch (e) {
-      $("dotLive").className = "dot bad"; $("liveTxt").textContent = "disconnected";
-      $("dotA").className = "dot bad"; $("pillA").textContent = "Offline";
-      $("dotB").className = "dot";
-      $("transferCounts").textContent = "Status unavailable · last snapshot may be stale";
-      if (!activeWrite) transfer("bad", "Node status unavailable. Check that both services are running.");
-      const b = $("banner"); b.style.display = "block";
-      b.textContent = "Cannot reach Node A. Start the nodes with scripts/run_nodes.sh, then open http://127.0.0.1:8001/ui";
-    } finally { busy = false; }
+      const result = await api('/replication/status');
+      if (!result.ok) throw new Error('Node A status unavailable');
+      $('banner').hidden = true; render(result.body);
+    } catch {
+      $('banner').hidden = false; $('banner').textContent = 'Cannot check Node A. Start both services. Any values below are the last snapshot and may be stale.';
+      $('consistency').textContent = 'Unknown · A unavailable'; $('consistency').className = 'badge bad'; $('live').textContent = 'Disconnected · last snapshot may be stale';
+    } finally { polling = false; }
   }
-
-  async function loadPrompt() {
+  function showResponse(method, key, result) { $('response').textContent = `${method} /key/${encodeURIComponent(key)} → ${result.status || 'connection error'}
+` + JSON.stringify(result.body,null,2); }
+  function setBusy(value) { writing = value; for (const id of ['put','get','delete']) $(id).disabled = value; }
+  async function operate(method) {
+    const key = $('key').value;
+    if (!key) { $('response').textContent = 'Enter a key first.'; return; }
+    if (method === 'DELETE' && !confirm(`Delete “${key}” from both nodes?`)) return;
+    setBusy(true);
+    if (method !== 'GET') animate('pending', `${method} ${key} — saving on A and requesting replication to B…`);
     try {
-      const p = await api("/context/prompt");
-      if (p.ok) { $("prompt").textContent = p.body.prompt || "(empty)"; $("promptTok").textContent = fmt(p.body.tokens) + " tokens"; }
-    } catch { /* poll() reports connectivity */ }
+      const result = await api('/key/' + encodeURIComponent(key), {method, ...(method === 'PUT' ? {body:JSON.stringify({value:$('value').value})} : {})});
+      showResponse(method,key,result);
+      if (result.ok) {
+        if (method === 'GET') { $('value').value = result.body.value; log(`GET ${key} · served full value from Node A`); }
+        else { const copied = result.body.replicated; const message = `${method} ${key} v${result.body.version} — ${copied ? 'Node B acknowledged ' + (result.body.deleted ? 'deletion.' : 'the full-value copy.') : 'saved on A; replication failed or pending. Automatic retries keep trying.'}`; animate(copied ? 'ok' : 'bad',message); log(message,copied ? 'ok':'warn'); }
+      } else { const message = `${method} ${key} failed (${result.status || 'connection error'}). ${result.status ? 'See the HTTP response below.' : 'Outcome unknown; check status before retrying.'}`; log(message,'bad'); if (method !== 'GET') animate('bad',message); }
+    } finally { setBusy(false); await poll(); }
   }
-
-  function transfer(state, message) {
-    $("transfer").dataset.state = state;
-    $("transferDetail").textContent = message;
-    if (transferAnimation) transferAnimation.cancel();
-    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const wire = $("transferPacket").parentElement;
-    const end = Math.max(0, wire.clientWidth - 32);
-    const stop = state === "bad" ? end * .45 : end;
-    if (state === "idle") return;
-    transferAnimation = $("transferPacket").animate([
-      { transform: "translateX(0)", opacity: 0 },
-      { opacity: 1, offset: .12 },
-      { transform: `translateX(${stop}px)`, opacity: 1, offset: .85 },
-      { transform: `translateX(${stop}px)`, opacity: 0 }
-    ], { duration: state === "pending" ? 1400 : 1800, iterations: state === "pending" ? Infinity : 1 });
-    $("transferPacket").style.background = state === "bad" ? "var(--bad)" : state === "ok" ? "var(--ok)" : "var(--c1)";
-  }
-
-  function observeReplication(prev, next) {
-    const entries = Object.entries(next.keys || {});
-    const pending = entries.filter(([, k]) => k.consistency_status !== "SYNCED_ARCHIVED").length;
-    $("transferCounts").textContent = `${fmt(next.replication_successes)} succeeded · ${fmt(next.replication_failures)} failed attempts · ${pending} pending · ${next.pending_deletes || 0} pending deletes`;
-    if (!prev || activeWrite) return;
-    const copied = entries.filter(([key, k]) => k.acked_version === k.version && k.acked_version > 0 && k.acked_version !== prev.keys[key]?.acked_version);
-    const failed = entries.filter(([key, k]) => k.consistency_status === "DIRTY_UNREPLICATED" && (k.version !== prev.keys[key]?.version || k.consistency_status !== prev.keys[key]?.consistency_status));
-    if (copied.length) transfer("ok", `${copied.map(([key, k]) => `${key} v${k.version}`).slice(0, 3).join(", ")} — copy acknowledged by Node B${copied.length > 3 ? ` (+${copied.length - 3} more)` : ""}.`);
-    else if (failed.length) transfer("bad", `${failed[0][0]} — copy failed; retained on Node A for background retry.`);
-  }
-
-  // ------------------------------------------------------------ render
-  function classify(k) {
-    const resident = k.residence === "RESIDENT_FULL";
-    const spilled = k.residence === "SPILLED_LOCAL";
-    const dirty = k.consistency_status === "DIRTY_UNREPLICATED";
-    const pending = k.consistency_status === "PENDING_REPLICATION";
-    return { resident, spilled, dirty, pending };
-  }
-
-  function render() {
-    const s = status, keys = Object.entries(s.keys || {});
-    const resident = keys.filter(([, k]) => classify(k).resident);
-    const spilled = keys.filter(([, k]) => classify(k).spilled);
-    const paged = keys.filter(([, k]) => k.residence === "PAGED_TO_NODE_B");
-    const dirty = keys.filter(([, k]) => classify(k).dirty || classify(k).pending);
-    const archived = keys.filter(([, k]) => k.acked_version > 0);
-
-    $("pillWin").textContent = `${fmt(s.active_window_tokens)} / ${fmt(s.max_window_tokens)}`;
-    $("pillKeys").textContent = `${resident.length} in L1` + (spilled.length ? ` · ${spilled.length} spilled` : "") + ` · ${paged.length} paged`;
-
-    $("sWin").innerHTML = `${fmt(s.active_window_tokens)}<small>tok</small>`;
-    const pct = s.max_window_tokens ? (s.active_window_tokens / s.max_window_tokens * 100) : 0;
-    const wc = $("sWinChip");
-    wc.className = "chip " + (s.over_budget ? "bad" : pct > 90 ? "warn" : "ok");
-    wc.textContent = s.over_budget ? `over budget · ${pct.toFixed(0)}%` : `${pct.toFixed(1)}% of budget`;
-    $("sPf").textContent = fmt(s.page_faults);
-    $("sSaved").innerHTML = `${fmt(s.tokens_saved_by_replication)}<small>tok</small>`;
-    $("sDirty").textContent = fmt(dirty.length);
-    const dc = $("sDirtyChip");
-    dc.className = "chip " + (dirty.length ? "warn" : "mut");
-    dc.textContent = !dirty.length ? "all replicated"
-      : spilled.length ? `${spilled.length} spilled to local disk` : "awaiting Node B";
-
-    renderComposition(s, keys);
-    renderIso([...resident, ...spilled], archived);
-    renderLive();
-    renderTable(keys);
-    renderDetailMeta();
-  }
-
-  function renderComposition(s, keys) {
-    let synced = 0, dirtyTok = 0, stubs = 0, spillTok = 0;
-    for (const [, k] of keys) {
-      const c = classify(k), t = k.active_tokens_in_node_a || 0;
-      if (c.spilled) spillTok += t;
-      else if (!c.resident) stubs += t;
-      else if (c.dirty || c.pending) dirtyTok += t;
-      else synced += t;
-    }
-    const parts = [
-      { name: "Resident · synced", v: synced, color: "var(--c1)" },
-      { name: "Resident · dirty / pending", v: dirtyTok, color: "var(--warn)" },
-      { name: "Spilled stubs (local disk)", v: spillTok, color: "var(--spill)" },
-      { name: "Paged-out stubs", v: stubs, color: "var(--c2)" },
-      { name: "Archive index", v: s.index_tokens || 0, color: "var(--c3)" },
-    ];
-    const total = parts.reduce((a, p) => a + p.v, 0) || 1;
-    $("seg").innerHTML = parts.map(p => {
-      const pc = p.v / total * 100;
-      return `<div style="flex:0 0 ${pc}%;color:${p.color}">
-        <div class="pct" style="${pc < 18 ? "font-size:0;" : ""}">${pc.toFixed(0)}%</div>
-        <div class="bars hatch" style="opacity:${p.v ? 1 : 0}"></div></div>`;
-    }).join("");
-    $("legend").innerHTML = parts.map(p =>
-      `<div><i style="background:${p.color}"></i>${p.name}<span class="lead"></span><b>${fmt(p.v)}</b><b style="color:var(--muted);min-width:48px">${(p.v / total * 100).toFixed(0)}%</b></div>`).join("");
-    const used = s.active_window_tokens || 0, max = s.max_window_tokens || 1;
-    $("budgetFill").style.width = Math.min(100, used / max * 100) + "%";
-    $("budgetFill").style.color = s.over_budget ? "var(--bad)" : "var(--c2)";
-    $("budgetL").textContent = `${fmt(used)} tokens in window`;
-    $("budgetR").textContent = `budget ${fmt(max)}` + (s.omitted_from_prompt ? ` · ${s.omitted_from_prompt} omitted from prompt` : "");
-  }
-
-  // ------------------------------------------------------------ isometric view
-  const NS = "http://www.w3.org/2000/svg";
-  function poly(pts, attrs) {
-    const p = document.createElementNS(NS, "polygon");
-    p.setAttribute("points", pts.map(q => q.join(",")).join(" "));
-    for (const a in attrs) p.setAttribute(a, attrs[a]);
-    return p;
-  }
-
-  function renderIso(resident, paged) {
-    const svg = $("iso"), box = svg.getBoundingClientRect();
-    const W = box.width, H = box.height;
-    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-    svg.innerHTML = `<defs>
-      <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8fd6f5" stop-opacity=".02"/><stop offset="1" stop-color="#8fd6f5" stop-opacity=".12"/></linearGradient>
-      <linearGradient id="glassBad" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff6b6b" stop-opacity=".02"/><stop offset="1" stop-color="#ff6b6b" stop-opacity=".12"/></linearGradient>
-      <filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
-    </defs>`;
-
-    const most = Math.max(resident.length, paged.length);
-    const N = Math.min(12, Math.max(6, Math.ceil(Math.sqrt(most))));   // grid cells per side
-    const overlay = getComputedStyle($("comp")).position === "absolute";
-    const compW = overlay ? $("comp").offsetWidth : 0;
-    // Fit two stacked floors: each diamond is N*cell tall, plus wall height, gap and labels.
-    const cellByH = (H - 60) / (2 * N + 7.5);
-    const cellByW = (overlay ? Math.max(W - compW - 60, W * 0.45) : W - 40) / (2 * N * 0.866);
-    const cell = Math.max(10, Math.min(36, cellByH, cellByW));
-    const halfW = N * cell * 0.866, wallH = cell * 3.2, gap = cell * 2.6;
-    let cx = overlay ? Math.max(W * 0.6, compW + halfW + 40) : W / 2;
-    cx = Math.min(cx, W - halfW - 48);   // leave room for the replication link
-    const top0 = 16 + wallH;                        // room for walls/blocks above the L1 plate
-    const iso = (gx, gy, z, oy) => [cx + (gx - gy) * cell * 0.866, oy + (gx + gy) * cell * 0.5 - z];
-
-    const bDown = faultMode === "down" || $("dotB").classList.contains("bad");
-    const floors = [
-      { name: "L1 · NODE A · WINDOW + SPILL", items: resident, oy: top0, bad: false, l1: true },
-      { name: "L2 · NODE B · ARCHIVE" + (bDown ? " · OFFLINE" : ""), items: paged, oy: top0 + N * cell + gap + wallH * 0.6, bad: bDown, l1: false },
-    ];
-    const maxTok = Math.max(1, ...[...resident, ...paged].map(([, k]) => k.full_tokens_on_node_b || k.active_tokens_in_node_a || 1));
-
-    // replication link between the two floors (right corners)
-    const a = iso(N, 0, 0, floors[0].oy), b = iso(N, 0, 0, floors[1].oy);
-    const link = document.createElementNS(NS, "path");
-    link.setAttribute("d", `M${a[0]+10},${a[1]} h22 V${b[1]} h-22`);
-    link.setAttribute("fill", "none"); link.setAttribute("stroke", bDown ? "#ff6b6b" : "#8fd6f5");
-    link.setAttribute("stroke-opacity", ".5"); if (bDown) link.setAttribute("stroke-dasharray", "4 5");
-    svg.appendChild(link);
-    for (const [x, y] of [[a[0] + 10, a[1]], [b[0] + 10, b[1]]]) {
-      const c = document.createElementNS(NS, "circle");
-      c.setAttribute("cx", x); c.setAttribute("cy", y); c.setAttribute("r", 3.5);
-      c.setAttribute("fill", bDown ? "#ff6b6b" : "#8fd6f5"); svg.appendChild(c);
-    }
-    if (W - a[0] > 150) {
-      const mid = document.createElementNS(NS, "text");
-      mid.setAttribute("x", a[0] + 40); mid.setAttribute("y", (a[1] + b[1]) / 2 + 4);
-      mid.setAttribute("class", "floor-label"); if (bDown) mid.setAttribute("fill", "#ff8a8a");
-      mid.textContent = bDown ? "replication paused" : "replicate ↓ hydrate ↑";
-      svg.appendChild(mid);
-    }
-
-    for (const f of [...floors].reverse()) {
-      const oy = f.oy, g = document.createElementNS(NS, "g");
-      const P = (x, y, z) => iso(x, y, z, oy);
-      const stroke = f.bad ? "#ff6b6b" : "#8fd6f5", fill = f.bad ? "url(#glassBad)" : "url(#glass)";
-      const th = cell * 0.35;                       // slab thickness
-      // back glass walls (do not occlude blocks)
-      g.appendChild(poly([P(0,0,0), P(N,0,0), P(N,0,wallH), P(0,0,wallH)], { fill, stroke, "stroke-opacity": ".22" }));
-      g.appendChild(poly([P(0,0,0), P(0,N,0), P(0,N,wallH), P(0,0,wallH)], { fill, stroke, "stroke-opacity": ".22" }));
-      // floor plate with thickness
-      g.appendChild(poly([P(0,N,0), P(N,N,0), P(N,N,-th), P(0,N,-th)], { fill: f.bad ? "rgba(255,107,107,.10)" : "rgba(143,214,245,.10)", stroke, "stroke-opacity": ".35" }));
-      g.appendChild(poly([P(N,0,0), P(N,N,0), P(N,N,-th), P(N,0,-th)], { fill: f.bad ? "rgba(255,107,107,.06)" : "rgba(143,214,245,.06)", stroke, "stroke-opacity": ".35" }));
-      g.appendChild(poly([P(0,0,0), P(N,0,0), P(N,N,0), P(0,N,0)], { fill: f.bad ? "rgba(60,20,24,.55)" : "rgba(14,34,46,.55)", stroke, "stroke-opacity": ".45" }));
-      for (let i = 1; i < N; i++) {
-        for (const [p1, p2] of [[P(i,0,0), P(i,N,0)], [P(0,i,0), P(N,i,0)]]) {
-          const l = document.createElementNS(NS, "line");
-          l.setAttribute("x1", p1[0]); l.setAttribute("y1", p1[1]); l.setAttribute("x2", p2[0]); l.setAttribute("y2", p2[1]);
-          l.setAttribute("stroke", stroke); l.setAttribute("stroke-opacity", ".08"); g.appendChild(l);
-        }
-      }
-      // blocks, back-to-front (row-major order is already back-to-front for this projection)
-      const cap = N * N, items = f.items.slice(0, cap);
-      items.forEach(([key, k], i) => {
-        const gx = i % N, gy = Math.floor(i / N);
-        const c = classify(k);
-        const tok = f.l1 && !c.spilled ? (k.active_tokens_in_node_a || 1) : (k.full_tokens_on_node_b || k.active_tokens_in_node_a || 1);
-        const h = cell * (0.35 + 2.4 * Math.sqrt(tok / maxTok)) * (c.spilled ? 0.45 : 1);
-        const pad = 0.14, x0 = gx + pad, x1 = gx + 1 - pad, y0 = gy + pad, y1 = gy + 1 - pad;
-        const base = f.bad ? [255,107,107] : c.spilled ? [159,140,255] : c.dirty ? [242,180,90] : c.pending ? [223,231,236] : f.l1 ? [143,214,245] : [63,156,200];
-        const fade = c.spilled ? 0.55 : 1;
-        const rgb = (m, al) => `rgba(${base.map(v => Math.round(v * m)).join(",")},${al * fade})`;
-        const blk = document.createElementNS(NS, "g");
-        blk.setAttribute("class", "blk" + (key === selected ? " sel" : ""));
-        if (c.dirty && !c.spilled) blk.setAttribute("filter", "url(#glow)");
-        if (c.spilled) blk.setAttribute("stroke-dasharray", "3 2");
-        blk.appendChild(poly([P(x0,y1,0), P(x1,y1,0), P(x1,y1,h), P(x0,y1,h)], { fill: rgb(.55, .55), stroke: rgb(1, .5), "stroke-width": ".6" }));
-        blk.appendChild(poly([P(x1,y0,0), P(x1,y1,0), P(x1,y1,h), P(x1,y0,h)], { fill: rgb(.38, .55), stroke: rgb(1, .5), "stroke-width": ".6" }));
-        blk.appendChild(poly([P(x0,y0,h), P(x1,y0,h), P(x1,y1,h), P(x0,y1,h)], { fill: rgb(1, .75), stroke: rgb(1, .9), "stroke-width": ".6" }));
-        const title = document.createElementNS(NS, "title");
-        title.textContent = f.l1 ? `${key} · current v${k.version}` : `${key} · archived v${k.acked_version}${k.acked_version !== k.version ? ` · awaiting v${k.version}` : " · acknowledged copy"}`;
-        blk.appendChild(title);
-        blk.addEventListener("mousemove", e => showTip(e, key, k));
-        blk.addEventListener("mouseleave", hideTip);
-        blk.addEventListener("click", () => select(key));
-        g.appendChild(blk);
-      });
-      // label under the front corner
-      const lp = P(N, N, -th), t = document.createElementNS(NS, "text");
-      t.setAttribute("x", lp[0]); t.setAttribute("y", lp[1] + 20); t.setAttribute("text-anchor", "middle");
-      t.setAttribute("class", "floor-label"); if (f.bad) t.setAttribute("fill", "#ff8a8a");
-      t.textContent = `${f.name} · ${f.items.length}` + (f.items.length > cap ? ` (${cap} shown)` : "");
-      g.appendChild(t);
-      svg.appendChild(g);
-    }
-  }
-  function showTip(e, key, k) {
-    const t = $("tip");
-    t.innerHTML = `<div class="k">${esc(key)}</div>
-      <div class="r"><span>version</span><span>${k.version}</span></div>
-      <div class="r"><span>residence</span><span>${esc(k.residence)}</span></div>
-      <div class="r"><span>consistency</span><span>${esc(k.consistency_status)}</span></div>
-      <div class="r"><span>L1 tokens</span><span>${fmt(k.active_tokens_in_node_a)}</span></div>
-      <div class="r"><span>full tokens</span><span>${fmt(k.full_tokens_on_node_b)}</span></div>
-      <div class="r"><span>evictable</span><span>${k.eviction_allowed ? "yes" : "no"}</span></div>
-      <div class="r"><span>policy</span><span>${k.pinned ? "pinned" : "—"} · p${k.priority ?? 0}</span></div>`;
-    t.style.display = "block";
-    const x = Math.min(e.clientX + 14, innerWidth - t.offsetWidth - 8), y = Math.min(e.clientY + 14, innerHeight - t.offsetHeight - 8);
-    t.style.left = x + "px"; t.style.top = y + "px";
-  }
-  function hideTip() { $("tip").style.display = "none"; }
-
-  // ------------------------------------------------------------ table + detail
-  function tagRes(r) {
-    if (r === "RESIDENT_FULL") return `<span class="tag res">resident</span>`;
-    if (r === "SPILLED_LOCAL") return `<span class="tag spill">spilled</span>`;
-    return `<span class="tag pg">paged</span>`;
-  }
-  function tagCon(c) {
-    if (c === "SYNCED_ARCHIVED") return `<span class="tag ok">synced</span>`;
-    if (c === "DIRTY_UNREPLICATED") return `<span class="tag dirty">dirty</span>`;
-    return `<span class="tag pend">${esc(c.toLowerCase().replace(/_/g, " "))}</span>`;
-  }
-
-  function renderTable(keys) {
-    $("keyCount").textContent = `${keys.length} total`;
-    $("emptyRows").style.display = keys.length ? "none" : "block";
-    $("rows").innerHTML = keys.map(([key, k]) => `
-      <tr class="row${key === selected ? " sel" : ""}" data-key="${esc(key)}">
-        <td class="key" title="${esc(key)}">${esc(key)}</td>
-        <td>${k.version}</td>
-        <td>${tagRes(k.residence)}</td>
-        <td>${tagCon(k.consistency_status)}</td>
-        <td>${fmt(k.active_tokens_in_node_a)}</td>
-        <td>${fmt(k.full_tokens_on_node_b)}</td>
-        <td>${k.pinned ? `<span class="tag pin">pinned</span> ` : ""}${k.priority ? `<span class="mono" style="color:var(--muted)">p${k.priority}</span>` : ""}</td>
-        <td>${k.eviction_allowed || k.residence !== "RESIDENT_FULL" ? "" : `<span class="lock" title="${esc(k.replication_error || "not evictable until acked")}">●</span>`}</td>
-      </tr>`).join("");
-  }
-  $("rows").addEventListener("click", e => { const tr = e.target.closest("tr.row"); if (tr) select(tr.dataset.key); });
-
-  function renderDetailMeta() {
-    const k = selected && status && status.keys[selected];
-    for (const b of ["btnHydrate", "btnView", "btnDelete", "btnPin", "prio", "btnPrio"]) $(b).disabled = !k;
-    if (k) {
-      $("btnPin").textContent = k.pinned ? "Unpin" : "Pin";
-      if (document.activeElement !== $("prio")) $("prio").value = k.priority ?? 0;
-    }
-    if (!k) { $("detailMeta").innerHTML = ""; $("selKey").textContent = selected ? "deleted" : "select a key"; return; }
-    $("selKey").textContent = selected;
-    $("detailMeta").innerHTML = `
-      <span>version</span><b>${k.version}</b>
-      <span>residence</span><b>${esc(k.residence)}</b>
-      <span>consistency</span><b>${esc(k.consistency_status)}</b>
-      <span>evictable</span><b>${k.eviction_allowed ? "yes" : "no"}</b>
-      <span>policy</span><b>${k.pinned ? "pinned" : "not pinned"} · priority ${k.priority ?? 0}</b>
-      ${k.replication_error ? `<span>last error</span><b style="color:var(--bad)">${esc(k.replication_error)}</b>` : ""}`;
-  }
-
-  async function peek(key) {
-    // peek=true: reading in the dashboard must not change LRU eviction order.
-    const r = await api(`/context/${enc(key)}?peek=true`);
-    if (key !== selected) return;
-    $("detailOut").textContent = r.ok ? r.body.content : `HTTP ${r.status}\n` + JSON.stringify(r.body, null, 2);
-  }
-
-  function select(key) {
-    selected = key;
-    if (status) render();
-    $("detailOut").textContent = "loading…";
-    peek(key);
-  }
-
-  $("btnView").onclick = () => peek(selected);
-
-  async function patchPolicy(body) {
-    const r = await api(`/context/${enc(selected)}`, { method: "PATCH", body: JSON.stringify(body) });
-    toast(r.ok ? `${selected}: ${body.pinned != null ? (body.pinned ? "pinned" : "unpinned") : "priority " + body.priority}` : `Update failed (${r.status})`, !r.ok);
-    poll(); loadPrompt();
-  }
-  $("btnPin").onclick = () => { const k = status && status.keys[selected]; if (k) patchPolicy({ pinned: !k.pinned }); };
-  $("btnPrio").onclick = () => {
-    const v = Math.max(-100, Math.min(100, parseInt($("prio").value, 10) || 0));
-    patchPolicy({ priority: v });
-  };
-  $("btnHydrate").onclick = async () => {
-    const r = await api(`/context/${enc(selected)}?hydrate=true`);
-    if (r.ok) {
-      $("detailOut").textContent = r.body.full_text;
-      toast(r.body.source === "L2_PAGE_FAULT" ? `Page fault: ${selected} hydrated from Node B`
-        : r.body.source === "L1_SPILL" ? `Page fault: ${selected} restored from Node A's local spill`
-        : `${selected} served from L1`);
-    } else {
-      $("detailOut").textContent = `HTTP ${r.status}\n` + JSON.stringify(r.body, null, 2);
-      toast(r.status === 503 ? "Node B unavailable: returned stub" : `Hydrate failed (${r.status})`, true);
-    }
-    poll(); loadPrompt();
-  };
-  $("btnDelete").onclick = async () => {
-    if (!confirm(`Delete ${selected} from Node A?`)) return;
-    const r = await api(`/context/${enc(selected)}`, { method: "DELETE" });
-    toast(r.ok ? `Deleted ${selected}` : `Delete failed (${r.status})`, !r.ok);
-    selected = null; $("detailOut").textContent = "—"; poll(); loadPrompt();
-  };
-
-  $("btnPut").onclick = async () => {
-    const key = $("putKey").value.trim(), text = $("putText").value;
-    if (!key || !text.trim()) { toast("Key and text are required", true); return; }
-    const button = $("btnPut");
-    button.disabled = true; activeWrite = key;
-    transfer("pending", `${key} — writing on Node A and requesting a copy on Node B…`);
+  $('writeForm').addEventListener('submit', event => { event.preventDefault(); operate('PUT'); });
+  $('get').onclick = () => operate('GET'); $('delete').onclick = () => operate('DELETE');
+  $('rowsA').addEventListener('click', event => { const button = event.target.closest('[data-key]'); if (button && snapshot) { const row = snapshot.node_a[button.dataset.key]; $('key').value = row.key; $('value').value = row.value; } });
+  async function readFault() { const result = await api('/admin/node_b/fault'); if (result.ok) { $('fault').value = result.body.mode; $('faultState').textContent = 'Current mode: ' + (result.body.mode === 'none' ? 'online' : result.body.mode); } else $('faultState').textContent = 'Fault control unavailable or requires an admin token.'; }
+  $('applyFault').onclick = async () => {
+    $('applyFault').disabled = true;
     try {
-      const r = await api(`/context/${enc(key)}`, { method: "PUT", body: JSON.stringify({ text }) });
-      if (r.ok) {
-        const synced = r.body.consistency_status === "SYNCED_ARCHIVED";
-        transfer(synced ? "ok" : "bad", synced
-          ? `${key} v${r.body.version} — Node B acknowledged the copy; original retained according to Node A's paging policy.`
-          : `${key} v${r.body.version} — stored on Node A; copy pending. Background retry will resume replication.`);
-        toast(`v${r.body.version} · ${r.body.consistency_status.toLowerCase().replace(/_/g, " ")}${r.body.over_budget ? " · OVER BUDGET" : ""}`, r.body.over_budget);
-        $("putText").value = ""; select(key);
-      } else {
-        transfer("bad", `${key} — ${r.status ? `write rejected (HTTP ${r.status})` : "request timed out or connection failed; outcome unknown, refresh status before retrying"}.`);
-        toast(`PUT failed (${r.status || "connection error"})`, true);
-      }
-    } finally {
-      activeWrite = null; button.disabled = false;
-      poll(); loadPrompt();
-    }
+      const mode = $('fault').value;
+      const request = () => api('/admin/node_b/fault',{method:'POST',body:JSON.stringify({mode,delay_s:3})});
+      let result = await request();
+      if (result.status === 403) { token = prompt('Enter PAGERKV_ADMIN_TOKEN configured on both nodes:') || ''; if (token) result = await request(); }
+      if (result.ok) { log('Node B mode: ' + mode, mode === 'none' ? 'ok' : 'warn'); $('faultState').textContent = 'Current mode: ' + (mode === 'none' ? 'online' : mode); }
+      else { $('faultState').textContent = 'Could not change mode. HTTP ' + (result.status || 'connection error'); await readFault(); }
+      await poll();
+    } finally { $('applyFault').disabled = false; }
   };
-
-  async function search() {
-    const q = $("q").value.trim();
-    if (!q) { $("results").innerHTML = ""; return; }
-    const r = await api(`/context/search?q=${encodeURIComponent(q)}&limit=10`);
-    if (!r.ok) { $("results").innerHTML = `<div style="color:var(--bad);cursor:default">HTTP ${r.status}: ${esc(r.body && r.body.error)}</div>`; return; }
-    const res = r.body.results || [];
-    $("results").innerHTML = res.length
-      ? res.map(x => `<div data-key="${esc(x.key)}"><span class="k">${esc(x.key)}</span><span class="mono" style="color:var(--muted)">${x.score != null ? Number(x.score).toFixed(2) : ""}</span></div>`).join("")
-      : `<div style="cursor:default;color:var(--dim)">no matches</div>`;
-  }
-  $("btnSearch").onclick = search;
-  $("q").addEventListener("keydown", e => { if (e.key === "Enter") search(); });
-  $("results").addEventListener("click", e => { const d = e.target.closest("[data-key]"); if (d) select(d.dataset.key); });
-
-  async function setFault(mode) {
-    return api("/admin/node_b/fault", { method: "POST", body: JSON.stringify({ mode, delay_s: mode === "slow" ? 3 : 0 }) });
-  }
-  $("faultSel").addEventListener("change", async e => {
-    const mode = e.target.value;
-    let r = await setFault(mode);
-    if (r.status === 403) {
-      const t = prompt("The fault switch needs an admin token (PAGERKV_ADMIN_TOKEN on the nodes):", "");
-      if (t) {
-        adminToken = t.trim();
-        try { localStorage.setItem("pagerkv.adminToken", adminToken); } catch { /* not persisted */ }
-        r = await setFault(mode);
-      }
-    }
-    toast(r.ok ? `Node B fault mode → ${mode}` : r.status === 403 ? "Forbidden: admin token required" : `Could not reach Node B (${r.status})`, !r.ok || mode !== "none");
-    poll();
-  });
-
-  // ------------------------------------------------------------ event log
-  function logEvent(kind, html) {
-    events.unshift({ t: new Date(), kind, html });
-    if (events.length > 120) events.pop();
-    $("logCount").textContent = `${events.length} events`;
-    $("log").innerHTML = events.map(e =>
-      `<div><time>${e.t.toLocaleTimeString([], { hour12: false })}</time><span class="${e.kind}">${e.html}</span></div>`).join("");
-  }
-
-  function diffEvents(prev, next) {
-    const K = k => `<span class="k">${esc(k)}</span>`;
-    for (const [key, n] of Object.entries(next.keys)) {
-      const o = prev.keys[key];
-      if (!o) { logEvent(n.consistency_status === "DIRTY_UNREPLICATED" ? "warn" : "", `PUT ${K(key)} v${n.version}`); continue; }
-      if (n.version !== o.version) logEvent("", `${K(key)} updated to v${n.version}`);
-      if (n.residence !== o.residence) {
-        if (n.residence === "PAGED_TO_NODE_B") logEvent("", `${K(key)} paged out to Node B`);
-        else if (n.residence === "SPILLED_LOCAL") logEvent("spill", `${K(key)} spilled to local disk (Node B unreachable)`);
-        else if (o.residence === "SPILLED_LOCAL") logEvent("spill", `${K(key)} restored from local spill`);
-        else logEvent("warn", `${K(key)} hydrated from Node B (page fault)`);
-      }
-      if (n.consistency_status !== o.consistency_status) {
-        if (n.consistency_status === "DIRTY_UNREPLICATED") logEvent("warn", `${K(key)} dirty: ${esc(n.replication_error || "replication failed")}`);
-        else if (n.consistency_status === "SYNCED_ARCHIVED") logEvent("ok", `${K(key)} v${n.version} replicated`);
-      }
-      if (n.pinned !== o.pinned) logEvent("", `${K(key)} ${n.pinned ? "pinned" : "unpinned"}`);
-      if (n.priority !== o.priority) logEvent("", `${K(key)} priority ${n.priority}`);
-    }
-    for (const key of Object.keys(prev.keys)) if (!next.keys[key]) logEvent("bad", `${K(key)} deleted`);
-    if (next.over_budget !== prev.over_budget) logEvent(next.over_budget ? "bad" : "ok", next.over_budget ? "window over budget" : "window back within budget");
-    if ((next.pending_deletes || 0) < (prev.pending_deletes || 0)) logEvent("ok", "pending delete applied on Node B");
-  }
-
-  // ------------------------------------------------------------ charts
-  function sample(s) {
-    let dirty = 0, spilled = 0;
-    for (const k of Object.values(s.keys)) {
-      if (k.consistency_status === "DIRTY_UNREPLICATED") dirty++;
-      if (k.residence === "SPILLED_LOCAL") spilled++;
-    }
-    hist.push({ t: Date.now(), tokens: s.active_window_tokens, budget: s.max_window_tokens, faults: s.page_faults, dirty, spilled });
-    if (hist.length > 240) hist.shift();
-  }
-
-  // Generic line chart. series: [{ys, color, width, dash, area}], bars: {ys, color, max}
-  function drawChart(svg, { n, yMax, series, bars, shade, marks, cursor, xLabel }) {
-    const box = svg.getBoundingClientRect(), W = box.width, H = box.height;
-    if (!W || !n) { svg.innerHTML = ""; return; }
-    const L = 44, R = 10, T = 10, B = 22, iw = W - L - R, ih = H - T - B;
-    const X = i => L + (n === 1 ? iw : (i / (n - 1)) * iw), Y = v => T + ih - (v / yMax) * ih;
-    let out = "";
-    for (let g = 0; g <= 4; g++) {
-      const v = yMax * g / 4, y = Y(v);
-      out += `<line x1="${L}" x2="${W - R}" y1="${y}" y2="${y}" stroke="rgba(255,255,255,.05)"/><text class="axis" x="${L - 6}" y="${y + 3}" text-anchor="end">${Math.round(v).toLocaleString()}</text>`;
-    }
-    if (shade) out += `<rect x="${X(shade[0])}" y="${T}" width="${Math.max(2, X(shade[1]) - X(shade[0]))}" height="${ih}" fill="rgba(255,107,107,.12)"/>`;
-    if (bars) {
-      const bw = Math.min(6, Math.max(1, iw / n * 0.6));
-      bars.ys.forEach((v, i) => { if (v) { const h = (v / bars.max) * ih * 0.3; out += `<rect x="${X(i) - bw / 2}" y="${T + ih - h}" width="${bw}" height="${h}" fill="${bars.color}" opacity=".55"/>`; } });
-    }
-    for (const sr of series) {
-      const pts = sr.ys.map((v, i) => v == null ? null : [X(i), Y(Math.min(v, yMax))]).filter(Boolean);
-      if (!pts.length) continue;
-      const d = pts.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + "," + p[1].toFixed(1)).join("");
-      if (sr.area) out += `<path d="${d}L${pts[pts.length - 1][0]},${T + ih}L${pts[0][0]},${T + ih}Z" fill="${sr.color}" opacity=".10"/>`;
-      out += `<path d="${d}" fill="none" stroke="${sr.color}" stroke-width="${sr.width || 1.8}" ${sr.dash ? `stroke-dasharray="${sr.dash}"` : ""}/>`;
-    }
-    for (const i of marks || []) out += `<line x1="${X(i)}" x2="${X(i)}" y1="${T}" y2="${T + ih}" stroke="var(--warn)" stroke-opacity=".7" stroke-width="1.5"/>`;
-    if (cursor != null) out += `<line x1="${X(cursor)}" x2="${X(cursor)}" y1="${T}" y2="${T + ih}" stroke="#e8eef2" stroke-opacity=".6" stroke-dasharray="3 3"/>`;
-    out += `<text class="axis" x="${L}" y="${H - 6}">${esc(xLabel[0])}</text><text class="axis" x="${W - R}" y="${H - 6}" text-anchor="end">${esc(xLabel[1])}</text>`;
-    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-    svg.innerHTML = out;
-  }
-
-  function renderLive() {
-    if ($("tlLive").hidden || !hist.length) return;
-    const n = hist.length, budget = hist[n - 1].budget;
-    const yMax = Math.max(budget * 1.15, ...hist.map(h => h.tokens)) || 1;
-    const marks = [];
-    for (let i = 1; i < n; i++) if (hist[i].faults > hist[i - 1].faults) marks.push(i);
-    drawChart($("liveChart"), {
-      n, yMax,
-      series: [
-        { ys: hist.map(h => h.tokens), color: "var(--c1)", area: true },
-        { ys: hist.map(h => h.budget), color: "var(--bad)", width: 1, dash: "5 4" },
-      ],
-      bars: { ys: hist.map(h => h.dirty + h.spilled), color: "var(--spill)", max: Math.max(4, ...hist.map(h => h.dirty + h.spilled)) },
-      marks,
-      xLabel: [`${Math.round((Date.now() - hist[0].t) / 1000)}s ago`, "now"],
-    });
-    $("tlSub").textContent = `last ${n} samples · every ${POLL_MS / 1000}s`;
-  }
-
-  // ------------------------------------------------------------ benchmark replay
-  let replay = null, playTimer = null;
-  async function loadReplay() {
-    if (replay) return true;
-    const r = await fetch("/ui/bench.csv");
-    if (!r.ok) { $("replayInfo").textContent = "No bench/results.csv yet: run python bench/run_benchmark.py"; return false; }
-    const lines = (await r.text()).trim().split(/\r?\n/), head = lines.shift().split(",");
-    const rows = lines.map(l => Object.fromEntries(l.split(",").map((v, i) => [head[i], v])));
-    const num = v => (v === "" || v == null ? null : Number(v));
-    replay = {
-      turns: rows.map(r => num(r.turn)),
-      baseline: rows.map(r => num(r.baseline_tokens)),
-      pagerkv: rows.map(r => num(r.pagerkv_prompt_tokens)),
-      dirty: rows.map(r => num(r.dirty_keys) || 0),
-      spilled: rows.map(r => num(r.spilled_keys) || 0),
-      paged: rows.map(r => num(r.paged_out_keys) || 0),
-      recall: rows.map(r => r.recall_ok),
-    };
-    const fault = replay.dirty.map((d, i) => d > 0 ? i : -1).filter(i => i >= 0);
-    replay.shade = fault.length ? [fault[0], fault[fault.length - 1] + 1] : null;
-    $("replaySlider").max = replay.turns.length;
-    $("replaySlider").value = replay.turns.length;
-    return true;
-  }
-
-  function renderReplay() {
-    if (!replay) return;
-    const upto = Number($("replaySlider").value), n = replay.turns.length, i = upto - 1;
-    const cut = arr => arr.map((v, j) => (j < upto ? v : null));
-    const budget = status ? status.max_window_tokens : 2000;
-    const yMax = Math.max(budget * 1.6, ...replay.pagerkv.filter(v => v != null));
-    drawChart($("replayChart"), {
-      n, yMax,
-      series: [
-        { ys: cut(replay.baseline), color: "#ff8a8a", width: 2.2 },
-        { ys: cut(replay.pagerkv), color: "var(--c1)", area: true },
-        { ys: replay.turns.map(() => budget), color: "var(--bad)", width: 1, dash: "5 4" },
-      ],
-      bars: { ys: cut(replay.spilled), color: "var(--spill)", max: Math.max(4, ...replay.spilled) },
-      shade: replay.shade, cursor: i,
-      xLabel: ["turn 1", `turn ${n}`],
-    });
-    const crash = replay.baseline.findIndex(v => v == null);
-    $("replayInfo").textContent =
-      `turn ${replay.turns[i]} · prompt ${fmt(replay.pagerkv[i])} tok · paged ${replay.paged[i]} · dirty ${replay.dirty[i]} · spilled ${replay.spilled[i]}` +
-      (crash >= 0 && i >= crash ? ` · baseline crashed at turn ${replay.turns[crash]}` : "") +
-      (replay.recall[i] === "1" ? " · recall ✓" : replay.recall[i] === "0" ? " · recall ✗" : "");
-    $("tlSub").textContent = "bench/results.csv · 100 deterministic turns";
-  }
-
-  $("replaySlider").addEventListener("input", renderReplay);
-  $("btnPlay").onclick = () => {
-    if (playTimer) { clearInterval(playTimer); playTimer = null; $("btnPlay").textContent = "Play"; return; }
-    const sl = $("replaySlider");
-    if (Number(sl.value) >= Number(sl.max)) sl.value = 1;
-    $("btnPlay").textContent = "Pause";
-    playTimer = setInterval(() => {
-      sl.value = Number(sl.value) + 1; renderReplay();
-      if (Number(sl.value) >= Number(sl.max)) { clearInterval(playTimer); playTimer = null; $("btnPlay").textContent = "Play"; }
-    }, 90);
-  };
-  document.querySelectorAll(".tab").forEach(btn => btn.addEventListener("click", async () => {
-    document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b === btn));
-    const live = btn.dataset.tab === "live";
-    $("tlLive").hidden = !live; $("tlReplay").hidden = live;
-    if (live) renderLive(); else if (await loadReplay()) renderReplay();
-  }));
-
-  addEventListener("resize", () => { if (status) render(); if (!$("tlReplay").hidden) renderReplay(); });
-  if (location.hash === "#replay") document.querySelector('.tab[data-tab="replay"]').click();
-  poll(); loadPrompt();
-  setInterval(poll, POLL_MS);
-  setInterval(loadPrompt, POLL_MS * 3);
+  poll(); readFault(); setInterval(poll,2000);
 })();
-</script>
-</body>
-</html>
+</script></body></html>

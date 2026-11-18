@@ -6,6 +6,6 @@ venv
 .mypy_cache
 .ruff_cache
 *.db
+*.db-*
 node_a_state.json*
 tests
-bench/benchmark.png
