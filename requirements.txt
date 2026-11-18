@@ -1,4 +1,6 @@
+# Runtime (pinned to the versions the test suite and benchmark were run with)
 fastapi==0.163.1
 uvicorn[standard]==0.54.0
 httpx==0.28.1
 pydantic==2.14.3
+tiktoken==0.14.0

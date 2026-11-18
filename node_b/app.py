@@ -1,87 +1,196 @@
-"""Node B stores complete replicas and simulates slow or failed requests."""
+"""FastAPI app for Node B (L2): the lossless archive.
+
+Fault injection makes the dirty-bit guarantees of Node A testable:
+  mode "none"  -> normal behaviour
+  mode "down"  -> every data endpoint returns HTTP 503 (health/admin stay up)
+  mode "slow"  -> every data endpoint sleeps delay_s seconds first
+"""
+
+from __future__ import annotations
 
 import asyncio
-import os
+import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.responses import PlainTextResponse
 
+from common import metrics
 from common.admin import require_admin
-from common.schemas import FaultRequest, ReplicateRequest
-from common.store import Store
+from common.schemas import (
+    ArchiveResponse,
+    FaultRequest,
+    FaultResponse,
+    ReplicateRequest,
+    ReplicateResponse,
+)
 from common.validation import validate_key
+from node_b import archive
 
-FAULT = FaultRequest(mode="none", delay_s=3)
+logger = logging.getLogger("pagerkv.node_b")
 
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    app.state.store = Store(os.environ.get("NODE_B_DB", "kv_node_b.db"))
-    yield
-    app.state.store.close()
-
-
-app = FastAPI(title="PagerKV · Node B replica", lifespan=lifespan)
-
-
-def check_key(key: str) -> None:
-    try:
-        validate_key(key)
-    except ValueError as exc:
-        raise HTTPException(422, str(exc)) from None
+# Global fault-injection switch, intentionally simple.
+FAULT: dict[str, object] = {"mode": "none", "delay_s": 0.0}
 
 
 async def fault_guard() -> None:
-    if FAULT.mode == "down":
-        raise HTTPException(503, "Node B unavailable (simulated failure)")
-    if FAULT.mode == "slow":
-        await asyncio.sleep(FAULT.delay_s)
+    """Dependency applied to every data endpoint of Node B."""
+    mode = FAULT["mode"]
+    if mode == "down":
+        raise HTTPException(status_code=503, detail="Node B is down (fault injection)")
+    if mode == "slow":
+        delay = float(FAULT["delay_s"])  # type: ignore[arg-type]
+        if delay > 0:
+            await asyncio.sleep(delay)
+
+
+def _key_or_422(key: str) -> str:
+    try:
+        validate_key(key)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    return key
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    archive.init_db()
+    logger.info("Node B archive ready at %s", archive.db_path())
+    yield
+
+
+app = FastAPI(
+    title="PagerKV Node B (L2 archive)",
+    version="1.0.0",
+    lifespan=lifespan,
+)
 
 
 @app.get("/health")
-async def health():
-    return {"node": "B", "ok": True, "ready": FAULT.mode != "down", "fault_mode": FAULT.mode}
+async def health() -> dict[str, object]:
+    mode = FAULT["mode"]
+    return {
+        "ok": True,
+        "node": "B",
+        "fault_mode": mode,
+        # ``health`` stays up so the fault switch can be turned back off;
+        # ``ready`` is the data-plane signal used for consistency reporting.
+        "ready": mode != "down",
+    }
 
 
-@app.get("/admin/fault", dependencies=[Depends(require_admin)])
-async def get_fault():
-    return FAULT
+@app.get("/ready")
+async def ready() -> dict[str, object]:
+    mode = FAULT["mode"]
+    if mode == "down":
+        raise HTTPException(status_code=503, detail="Node B is down (fault injection)")
+    return {"ok": True, "node": "B", "fault_mode": mode}
 
 
-@app.post("/admin/fault", dependencies=[Depends(require_admin)])
-async def set_fault(body: FaultRequest):
-    FAULT.mode = body.mode
-    FAULT.delay_s = body.delay_s
-    return FAULT
+@app.get("/metrics", response_class=PlainTextResponse)
+def prometheus_metrics() -> str:
+    stats = archive.stats()
+    mode = FAULT["mode"]
+    return metrics.render(
+        [
+            ("pagerkv_b_archived_keys", "gauge", "Keys held in the archive.", stats["keys"]),
+            ("pagerkv_b_archived_tokens", "gauge", "Full-text tokens archived.", stats["tokens"]),
+            (
+                "pagerkv_b_tombstones",
+                "gauge",
+                "Delete watermarks held by Node B.",
+                stats["tombstones"],
+            ),
+            ("pagerkv_b_fault_down", "gauge", "1 when fault mode is down.", mode == "down"),
+            ("pagerkv_b_fault_slow", "gauge", "1 when fault mode is slow.", mode == "slow"),
+        ]
+    )
+
+
+@app.get(
+    "/admin/fault",
+    response_model=FaultResponse,
+    dependencies=[Depends(require_admin)],
+)
+async def get_fault() -> FaultResponse:
+    return FaultResponse(mode=FAULT["mode"], delay_s=float(FAULT["delay_s"]))  # type: ignore[arg-type]
+
+
+@app.post(
+    "/admin/fault",
+    response_model=FaultResponse,
+    dependencies=[Depends(require_admin)],
+)
+async def set_fault(request: FaultRequest) -> FaultResponse:
+    FAULT["mode"] = request.mode
+    FAULT["delay_s"] = float(request.delay_s)
+    logger.warning("Fault mode set to %s (delay=%ss)", request.mode, request.delay_s)
+    return FaultResponse(mode=request.mode, delay_s=float(request.delay_s))
+
+
+@app.post(
+    "/replicate",
+    response_model=ReplicateResponse,
+    dependencies=[Depends(fault_guard)],
+)
+def replicate(request: ReplicateRequest) -> ReplicateResponse:
+    row = archive.save(request.key, request.version, request.full_text)
+    return ReplicateResponse(
+        key=row["key"],
+        version=row["version"],
+        stub=row["stub"],
+        full_tokens=row["full_tokens"],
+        sha256=row["sha256"],
+        stale_write=bool(row.get("stale_write", False)),
+    )
+
+
+@app.get(
+    "/search",
+    dependencies=[Depends(fault_guard)],
+)
+def search(q: str = Query(default=""), limit: int = Query(default=5, ge=1, le=50)):
+    return {"results": archive.search(q, limit)}
+
+
+@app.get(
+    "/archive/{key:path}",
+    response_model=ArchiveResponse,
+    dependencies=[Depends(fault_guard)],
+)
+def get_archive(key: str) -> ArchiveResponse:
+    row = archive.get(_key_or_422(key))
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"no archived key {key!r}")
+    return ArchiveResponse(
+        key=row["key"],
+        version=row["version"],
+        full_text=row["full_text"],
+        full_tokens=row["full_tokens"],
+        stub=row["stub"],
+        sha256=row["sha256"],
+    )
+
+
+@app.delete(
+    "/archive/{key:path}",
+    dependencies=[Depends(fault_guard)],
+)
+def delete_archive(key: str, version: int = Query(ge=0)) -> dict[str, object]:
+    """Delete ``key`` if its archived version is <= ``version`` (idempotent)."""
+    return archive.delete(_key_or_422(key), version)
 
 
 @app.get("/keys", dependencies=[Depends(fault_guard)])
-async def keys():
-    return {"node": "B", "keys": app.state.store.rows()}
+def list_keys():
+    return {"node": "B", "keys": archive.snapshot()}
 
 
 @app.get("/key/{key:path}", dependencies=[Depends(fault_guard)])
-async def get_key(key: str):
-    check_key(key)
-    row = app.state.store.get(key)
-    if not row or row["deleted"]:
-        raise HTTPException(404, "Key not found")
-    return {"key": key, "value": row["value"], "version": row["version"], "node": "B"}
-
-
-@app.put("/replicate/{key:path}", dependencies=[Depends(fault_guard)])
-async def replicate(key: str, body: ReplicateRequest):
-    check_key(key)
-    previous = app.state.store.get(key)
-    if previous and (
-        previous["version"] > body.version
-        or (
-            previous["version"] == body.version
-            and (previous["value"] != body.value or bool(previous["deleted"]) != body.deleted)
-        )
-    ):
-        return JSONResponse(
-            status_code=409, content={"error": "Version conflict", "version": previous["version"]}
-        )
-    return app.state.store.save(key, body.value, body.version, body.deleted)
+def get_value(key: str):
+    _key_or_422(key)
+    row = archive.get(key)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Key not found")
+    return {"key": key, "value": row["full_text"], "version": row["version"], "node": "B"}

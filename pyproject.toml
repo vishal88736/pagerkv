@@ -1,7 +1,7 @@
 [project]
 name = "pagerkv"
 version = "1.1.0"
-description = "REST mini distributed key-value store with full-value replication"
+description = "REST replicated key-value store with bounded agent context and visual node replication"
 requires-python = ">=3.11"
 
 [tool.pytest.ini_options]
@@ -24,7 +24,7 @@ ignore = [
 
 [tool.mypy]
 python_version = "3.12"
-files = ["common", "node_a", "node_b"]
+files = ["common", "node_a", "node_b", "bench"]
 ignore_missing_imports = true
 check_untyped_defs = true
 warn_unused_ignores = true
