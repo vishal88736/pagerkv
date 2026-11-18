@@ -109,6 +109,20 @@ button,input,select,textarea{font:inherit;color:inherit}
 .tip .r{display:flex; justify-content:space-between; gap:16px; color:var(--muted)}
 .tip .r span:last-child{color:var(--text)}
 
+/* Replication activity is driven by requests and observed acknowledgments. */
+.transfer{margin:18px 28px 0;padding:18px 24px;background:var(--panel);border:1px solid var(--line2)}
+.transfer-head,.transfer-track{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.transfer-head{justify-content:space-between;margin-bottom:16px;font-size:13px}
+.transfer-head strong{font-weight:500}.transfer-head span{color:var(--muted)}
+.transfer-node{border:1px solid var(--line2);padding:12px 18px;font-family:var(--mono);font-size:12px}
+.transfer-wire{flex:1;min-width:80px;height:32px;position:relative;overflow:hidden}
+.transfer-wire:before{content:"";position:absolute;left:0;right:0;top:15px;border-top:1px dashed var(--dim)}
+.transfer-packet{position:absolute;top:7px;left:0;width:32px;height:18px;border-radius:4px;background:var(--c1);opacity:0}
+.transfer[data-state="ok"] .transfer-node:last-child{border-color:var(--ok);color:var(--ok)}
+.transfer[data-state="bad"] .transfer-node:last-child{border-color:var(--bad);color:var(--bad)}
+.transfer-detail{font-family:var(--mono);font-size:12px;color:var(--muted);margin-top:12px;overflow-wrap:anywhere}
+@media(max-width:640px){.transfer{margin:16px 16px 0;padding:16px}.transfer-node{padding:10px}}
+
 /* ---------- lower panels ---------- */
 .lower{display:grid; grid-template-columns:1.5fr 1fr; gap:24px; padding:0 28px 40px; align-items:start}
 .panel{background:var(--panel); border:1px solid var(--line); padding:22px 24px; min-width:0}
@@ -232,6 +246,12 @@ svg.chart{display:block; width:100%; height:220px}
 </header>
 
 <div class="banner" id="banner"></div>
+
+<section class="transfer" id="transfer" data-state="idle" aria-label="Replication activity">
+  <div class="transfer-head"><strong>Node replication · A → B</strong><span id="transferCounts">Waiting for node status…</span></div>
+  <div class="transfer-track"><div class="transfer-node">Node A · original</div><div class="transfer-wire"><div class="transfer-packet" id="transferPacket"></div></div><div class="transfer-node">Node B · copy</div></div>
+  <div class="transfer-detail" id="transferDetail" role="status" aria-live="polite">Write a key to see it copied. Animations illustrate requests and acknowledgments observed by this dashboard.</div>
+</section>
 
 <section class="stage">
   <div class="stats">
@@ -371,6 +391,7 @@ svg.chart{display:block; width:100%; height:220px}
   const POLL_MS = 1500;
 
   let status = null, selected = null, faultMode = "none", busy = false, faultLocked = false;
+  let transferAnimation = null, activeWrite = null;
   let adminToken = "";
   try { adminToken = localStorage.getItem("pagerkv.adminToken") || ""; } catch { /* storage unavailable */ }
   const hist = [];          // live samples for the timeline
@@ -384,7 +405,9 @@ svg.chart{display:block; width:100%; height:220px}
   async function api(path, opts = {}) {
     const headers = { "content-type": "application/json" };
     if (adminToken && path.startsWith("/admin/")) headers["X-Admin-Token"] = adminToken;
-    const r = await fetch(path, { headers, ...opts });
+    let r;
+    try { r = await fetch(path, { ...opts, headers: { ...headers, ...opts.headers }, signal: AbortSignal.timeout(6000) }); }
+    catch { return { ok: false, status: 0, body: { error: "Request failed or timed out" } }; }
     let body = null;
     try { body = await r.json(); } catch { /* 204 or non-json */ }
     return { ok: r.ok, status: r.status, body };
@@ -398,6 +421,7 @@ svg.chart{display:block; width:100%; height:220px}
       const [h, s, f] = await Promise.all([
         api("/health"), api("/context/status?include_text=false"), api("/admin/node_b/fault")
       ]);
+      if (!h.ok || !s.ok || !s.body?.keys) throw new Error("Node A status unavailable");
       $("dotLive").className = "dot ok"; $("liveTxt").textContent = "live · " + new Date().toLocaleTimeString();
       $("banner").style.display = "none";
       const bUp = !!(h.body && (h.body.node_b_ready ?? h.body.node_b_reachable));
@@ -414,6 +438,7 @@ svg.chart{display:block; width:100%; height:220px}
       $("dotB").className = "dot " + bState;
       if (s.ok) {
         if (status) diffEvents(status, s.body);
+        observeReplication(status, s.body);
         status = s.body;
         sample(status);
         render();
@@ -421,6 +446,9 @@ svg.chart{display:block; width:100%; height:220px}
     } catch (e) {
       $("dotLive").className = "dot bad"; $("liveTxt").textContent = "disconnected";
       $("dotA").className = "dot bad"; $("pillA").textContent = "Offline";
+      $("dotB").className = "dot";
+      $("transferCounts").textContent = "Status unavailable · last snapshot may be stale";
+      if (!activeWrite) transfer("bad", "Node status unavailable. Check that both services are running.");
       const b = $("banner"); b.style.display = "block";
       b.textContent = "Cannot reach Node A. Start the nodes with scripts/run_nodes.sh, then open http://127.0.0.1:8001/ui";
     } finally { busy = false; }
@@ -431,6 +459,35 @@ svg.chart{display:block; width:100%; height:220px}
       const p = await api("/context/prompt");
       if (p.ok) { $("prompt").textContent = p.body.prompt || "(empty)"; $("promptTok").textContent = fmt(p.body.tokens) + " tokens"; }
     } catch { /* poll() reports connectivity */ }
+  }
+
+  function transfer(state, message) {
+    $("transfer").dataset.state = state;
+    $("transferDetail").textContent = message;
+    if (transferAnimation) transferAnimation.cancel();
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const wire = $("transferPacket").parentElement;
+    const end = Math.max(0, wire.clientWidth - 32);
+    const stop = state === "bad" ? end * .45 : end;
+    if (state === "idle") return;
+    transferAnimation = $("transferPacket").animate([
+      { transform: "translateX(0)", opacity: 0 },
+      { opacity: 1, offset: .12 },
+      { transform: `translateX(${stop}px)`, opacity: 1, offset: .85 },
+      { transform: `translateX(${stop}px)`, opacity: 0 }
+    ], { duration: state === "pending" ? 1400 : 1800, iterations: state === "pending" ? Infinity : 1 });
+    $("transferPacket").style.background = state === "bad" ? "var(--bad)" : state === "ok" ? "var(--ok)" : "var(--c1)";
+  }
+
+  function observeReplication(prev, next) {
+    const entries = Object.entries(next.keys || {});
+    const pending = entries.filter(([, k]) => k.consistency_status !== "SYNCED_ARCHIVED").length;
+    $("transferCounts").textContent = `${fmt(next.replication_successes)} succeeded · ${fmt(next.replication_failures)} failed attempts · ${pending} pending · ${next.pending_deletes || 0} pending deletes`;
+    if (!prev || activeWrite) return;
+    const copied = entries.filter(([key, k]) => k.acked_version === k.version && k.acked_version > 0 && k.acked_version !== prev.keys[key]?.acked_version);
+    const failed = entries.filter(([key, k]) => k.consistency_status === "DIRTY_UNREPLICATED" && (k.version !== prev.keys[key]?.version || k.consistency_status !== prev.keys[key]?.consistency_status));
+    if (copied.length) transfer("ok", `${copied.map(([key, k]) => `${key} v${k.version}`).slice(0, 3).join(", ")} — copy acknowledged by Node B${copied.length > 3 ? ` (+${copied.length - 3} more)` : ""}.`);
+    else if (failed.length) transfer("bad", `${failed[0][0]} — copy failed; retained on Node A for background retry.`);
   }
 
   // ------------------------------------------------------------ render
@@ -447,7 +504,8 @@ svg.chart{display:block; width:100%; height:220px}
     const resident = keys.filter(([, k]) => classify(k).resident);
     const spilled = keys.filter(([, k]) => classify(k).spilled);
     const paged = keys.filter(([, k]) => k.residence === "PAGED_TO_NODE_B");
-    const dirty = keys.filter(([, k]) => classify(k).dirty);
+    const dirty = keys.filter(([, k]) => classify(k).dirty || classify(k).pending);
+    const archived = keys.filter(([, k]) => k.acked_version > 0);
 
     $("pillWin").textContent = `${fmt(s.active_window_tokens)} / ${fmt(s.max_window_tokens)}`;
     $("pillKeys").textContent = `${resident.length} in L1` + (spilled.length ? ` · ${spilled.length} spilled` : "") + ` · ${paged.length} paged`;
@@ -466,7 +524,7 @@ svg.chart{display:block; width:100%; height:220px}
       : spilled.length ? `${spilled.length} spilled to local disk` : "awaiting Node B";
 
     renderComposition(s, keys);
-    renderIso([...resident, ...spilled], paged);
+    renderIso([...resident, ...spilled], archived);
     renderLive();
     renderTable(keys);
     renderDetailMeta();
@@ -601,6 +659,9 @@ svg.chart{display:block; width:100%; height:220px}
         blk.appendChild(poly([P(x0,y1,0), P(x1,y1,0), P(x1,y1,h), P(x0,y1,h)], { fill: rgb(.55, .55), stroke: rgb(1, .5), "stroke-width": ".6" }));
         blk.appendChild(poly([P(x1,y0,0), P(x1,y1,0), P(x1,y1,h), P(x1,y0,h)], { fill: rgb(.38, .55), stroke: rgb(1, .5), "stroke-width": ".6" }));
         blk.appendChild(poly([P(x0,y0,h), P(x1,y0,h), P(x1,y1,h), P(x0,y1,h)], { fill: rgb(1, .75), stroke: rgb(1, .9), "stroke-width": ".6" }));
+        const title = document.createElementNS(NS, "title");
+        title.textContent = f.l1 ? `${key} · current v${k.version}` : `${key} · archived v${k.acked_version}${k.acked_version !== k.version ? ` · awaiting v${k.version}` : " · acknowledged copy"}`;
+        blk.appendChild(title);
         blk.addEventListener("mousemove", e => showTip(e, key, k));
         blk.addEventListener("mouseleave", hideTip);
         blk.addEventListener("click", () => select(key));
@@ -727,12 +788,26 @@ svg.chart{display:block; width:100%; height:220px}
   $("btnPut").onclick = async () => {
     const key = $("putKey").value.trim(), text = $("putText").value;
     if (!key || !text.trim()) { toast("Key and text are required", true); return; }
-    const r = await api(`/context/${enc(key)}`, { method: "PUT", body: JSON.stringify({ text }) });
-    if (r.ok) {
-      toast(`v${r.body.version} · ${r.body.consistency_status.toLowerCase().replace(/_/g, " ")}${r.body.over_budget ? " · OVER BUDGET" : ""}`, r.body.over_budget);
-      $("putText").value = ""; select(key);
-    } else toast(`PUT failed (${r.status})`, true);
-    poll(); loadPrompt();
+    const button = $("btnPut");
+    button.disabled = true; activeWrite = key;
+    transfer("pending", `${key} — writing on Node A and requesting a copy on Node B…`);
+    try {
+      const r = await api(`/context/${enc(key)}`, { method: "PUT", body: JSON.stringify({ text }) });
+      if (r.ok) {
+        const synced = r.body.consistency_status === "SYNCED_ARCHIVED";
+        transfer(synced ? "ok" : "bad", synced
+          ? `${key} v${r.body.version} — Node B acknowledged the copy; original retained according to Node A's paging policy.`
+          : `${key} v${r.body.version} — stored on Node A; copy pending. Background retry will resume replication.`);
+        toast(`v${r.body.version} · ${r.body.consistency_status.toLowerCase().replace(/_/g, " ")}${r.body.over_budget ? " · OVER BUDGET" : ""}`, r.body.over_budget);
+        $("putText").value = ""; select(key);
+      } else {
+        transfer("bad", `${key} — ${r.status ? `write rejected (HTTP ${r.status})` : "request timed out or connection failed; outcome unknown, refresh status before retrying"}.`);
+        toast(`PUT failed (${r.status || "connection error"})`, true);
+      }
+    } finally {
+      activeWrite = null; button.disabled = false;
+      poll(); loadPrompt();
+    }
   };
 
   async function search() {

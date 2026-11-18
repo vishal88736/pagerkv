@@ -265,9 +265,18 @@ an access, so watching the system does not change its eviction order.
   spilled / paged key counts.
 - **Stat cards:** active window tokens, page faults, tokens saved by replication,
   and dirty keys (with how many are spilled).
+- **Replication activity:** a packet animates from Node A to Node B during a
+  dashboard write. Green means an acknowledgment was observed; red means a
+  failed or unconfirmed copy. Polling also animates newly observed acknowledgments
+  after background recovery, and displays cumulative successful/failed attempts,
+  pending keys and pending deletes. These are illustrations of observed requests
+  and status changes, not a packet capture. Reduced-motion preferences disable
+  packet movement. Connection errors retain the snapshot and label it stale.
 - **Isometric view:** the L1 floor shows keys on Node A (resident blocks, plus
-  spilled blocks drawn short, dashed and violet); the L2 floor shows keys paged to
-  Node B. Block height scales with tokens, the grid grows with the key count, dirty
+  spilled blocks drawn short, dashed and violet); the L2 floor shows all keys
+  with acknowledged archive versions, including copies still resident on Node A.
+  Each archive block has a native tooltip naming its acknowledged version, so an
+  older copy awaiting a newer update can be distinguished. Block height scales with tokens, the grid grows with the key count, dirty
   keys glow amber, and the L2 floor turns red while Node B is down. Hover a block
   for its status (including pin and priority), or click it to inspect it.
 - **Window composition:** synced, dirty/pending, spilled-stub, paged-stub and
