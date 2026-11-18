@@ -62,9 +62,12 @@ def make_observation(turn: int, target_tokens: int, rng: random.Random) -> tuple
     """Varied text of approximately ``target_tokens``.
 
     The first sentence is deliberately short; it becomes the extractive stub.
-    A unique fact with a 4-char code is embedded so recall can be tested.
+    A unique fact with a lowercase 6-letter code is embedded so recall can be
+    tested.  The code must not look like an identifier: uppercase codes (or
+    words with digits/underscores) are copied into the stub by the summarizer,
+    which would make a "recall" check pass without ever hydrating the block.
     """
-    code = "".join(rng.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(4))
+    code = "".join(rng.choice("abcdefghjkmnpqrstuvwxyz") for _ in range(6))
     parts = [
         f"Observation {turn}: {rng.choice(SERVICES)} telemetry update.",
         f"Fact obs_{turn}: deploy token is {code}.",
@@ -389,6 +392,14 @@ def run() -> dict:
                             recall_results.append((turn, recall_key_turn, ok))
                             rows[-1]["recall_ok"] = "1" if ok else "0"
 
+                    # ---- end-of-workload metric ------------------------
+                    # Capture page faults before the verification reads below:
+                    # those 100 hydrations are the benchmark's own correctness
+                    # check, not agent behaviour, and would inflate the number.
+                    page_faults = client.get(
+                        "/context/status"
+                    ).json()["page_faults"]
+
                     # ---- end-to-end lossless check ---------------------
                     for turn in range(1, TURNS + 1):
                         response = client.get(
@@ -406,10 +417,6 @@ def run() -> dict:
                     for kt in random_keys:
                         ok = try_recall(kt, False)
                         recall_results.append((TURNS + 1, kt, ok))
-
-                    page_faults = client.get(
-                        "/context/status"
-                    ).json()["page_faults"]
         finally:
             nodes.stop()
 

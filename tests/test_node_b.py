@@ -71,6 +71,97 @@ def test_stub_is_short(b_client, key_factory, text_factory):
     assert ack["full_tokens"] == count_tokens(text)
 
 
+def test_same_version_same_text_is_idempotent(b_client, key_factory, text_factory):
+    """A retried replication (same version, same bytes) succeeds without rewriting."""
+    key = key_factory("nodeb_idem")
+    text = text_factory(300, seed=51)
+
+    first = b_client.post(
+        "/replicate", json={"key": key, "version": 1, "full_text": text}
+    )
+    assert first.status_code == 200
+    assert first.json()["stale_write"] is False
+
+    retry = b_client.post(
+        "/replicate", json={"key": key, "version": 1, "full_text": text}
+    )
+    assert retry.status_code == 200
+    assert retry.json()["stale_write"] is False
+    assert retry.json()["sha256"] == _sha(text)
+    assert b_client.get(f"/archive/{key}").json()["full_text"] == text
+
+
+def test_same_version_different_text_is_a_conflict(b_client, key_factory, text_factory):
+    """Silently overwriting a same-version payload would lose acknowledged data."""
+    key = key_factory("nodeb_conflict")
+    original = text_factory(300, seed=61)
+    conflicting = text_factory(300, seed=62)
+
+    assert (
+        b_client.post(
+            "/replicate", json={"key": key, "version": 1, "full_text": original}
+        ).json()["stale_write"]
+        is False
+    )
+    conflict = b_client.post(
+        "/replicate", json={"key": key, "version": 1, "full_text": conflicting}
+    )
+    assert conflict.status_code == 200
+    body = conflict.json()
+    assert body["stale_write"] is True
+    assert body["version"] == 1
+
+    archived = b_client.get(f"/archive/{key}").json()
+    assert archived["full_text"] == original
+    assert archived["sha256"] == _sha(original)
+
+
+def test_delete_tombstone_blocks_late_replication(b_client, key_factory, text_factory):
+    """A delayed PUT that arrives after DELETE must not resurrect the key."""
+    key = key_factory("nodeb_tombstone")
+    text = text_factory(300, seed=71)
+
+    assert (
+        b_client.post(
+            "/replicate", json={"key": key, "version": 1, "full_text": text}
+        ).status_code
+        == 200
+    )
+    deleted = b_client.delete(f"/archive/{key}", params={"version": 1}).json()
+    assert deleted["deleted"] is True
+
+    late = b_client.post(
+        "/replicate", json={"key": key, "version": 1, "full_text": text}
+    )
+    assert late.status_code == 200
+    assert late.json()["stale_write"] is True
+    assert b_client.get(f"/archive/{key}").status_code == 404
+
+    # A genuinely newer write is still accepted after the tombstone.
+    newer_text = text_factory(300, seed=72)
+    accepted = b_client.post(
+        "/replicate", json={"key": key, "version": 2, "full_text": newer_text}
+    )
+    assert accepted.json()["stale_write"] is False
+    assert b_client.get(f"/archive/{key}").json()["full_text"] == newer_text
+
+
+def test_ready_reflects_fault_mode(b_client, key_factory, text_factory):
+    assert b_client.get("/ready").status_code == 200
+
+    assert (
+        b_client.post("/admin/fault", json={"mode": "down", "delay_s": 0}).status_code
+        == 200
+    )
+    try:
+        assert b_client.get("/health").status_code == 200
+        assert b_client.get("/health").json()["ready"] is False
+        assert b_client.get("/ready").status_code == 503
+    finally:
+        b_client.post("/admin/fault", json={"mode": "none", "delay_s": 0})
+    assert b_client.get("/ready").status_code == 200
+
+
 def test_fault_down_returns_503(b_client, key_factory, text_factory):
     key = key_factory("nodeb_fault")
     text = text_factory(200, seed=41)

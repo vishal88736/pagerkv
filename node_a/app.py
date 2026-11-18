@@ -291,7 +291,7 @@ async def kv_put(key: str, body: KvPutRequest, request: Request) -> dict:
 
 
 @app.get("/kv/{key:path}", response_model=KvValueResponse)
-async def kv_get(key: str, request: Request) -> dict:
+async def kv_get(key: str, request: Request) -> dict | JSONResponse:
     _key_or_422(key)
     try:
         hydrated = await _state(request).hydrate(key, _replicator(request))

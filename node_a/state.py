@@ -590,7 +590,7 @@ class NodeAState:
             logger.info("paged out %s v%s", victim.key, victim.version)
 
         while self.spill_dirty and self.window_tokens() > self.max_window_tokens:
-            candidates: list[tuple[KeyEntry, str]] = []
+            spill_candidates: list[tuple[KeyEntry, str]] = []
             for entry in self.entries.values():
                 if not entry.spill_allowed or entry.pinned_until_compaction:
                     continue
@@ -602,11 +602,11 @@ class NodeAState:
                     label="SPILLED",
                 )
                 if count_tokens(spill_stub) < entry.full_tokens:
-                    candidates.append((entry, spill_stub))
-            if not candidates:
+                    spill_candidates.append((entry, spill_stub))
+            if not spill_candidates:
                 break
             victim, spill_stub = min(
-                candidates, key=lambda item: item[0].eviction_key
+                spill_candidates, key=lambda item: item[0].eviction_key
             )
             victim.stub = spill_stub
             victim.residence = SPILLED_LOCAL

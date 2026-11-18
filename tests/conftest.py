@@ -1,9 +1,16 @@
-"""Session fixtures: real Node B + Node A subprocesses on ports 8002/8001."""
+"""Fixtures: real Node B + Node A subprocesses on ephemeral ports.
+
+Every test that needs HTTP servers gets a fresh pair with its own temporary
+database and state file, so tests cannot leak keys, faults or token budgets
+into each other.  Pure unit tests that never request ``a_client``/``b_client``
+do not start any processes.
+"""
 
 from __future__ import annotations
 
 import os
 import random
+import socket
 import subprocess
 import sys
 import time
@@ -18,9 +25,6 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from common.tokens import count_tokens  # noqa: E402
-
-A_URL = "http://127.0.0.1:8001"
-B_URL = "http://127.0.0.1:8002"
 
 _TEMPLATES = [
     "Fact {n}: table {table} has column {column} of type {dtype}.",
@@ -67,15 +71,28 @@ def make_text(target_tokens: int, seed: int = 0) -> str:
     return "\n".join(parts)
 
 
+def _free_port() -> int:
+    """Ask the OS for an unused TCP port, then release it for uvicorn."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
 class ServerManager:
     def __init__(self, tmp_dir: Path) -> None:
         self.tmp_dir = tmp_dir
+        self.a_port = _free_port()
+        self.b_port = _free_port()
+        while self.b_port == self.a_port:  # pragma: no cover - astronomical
+            self.b_port = _free_port()
+        self.a_url = f"http://127.0.0.1:{self.a_port}"
+        self.b_url = f"http://127.0.0.1:{self.b_port}"
         self.env = os.environ.copy()
         self.env.update(
             {
                 "NODE_B_DB": str(tmp_dir / "node_b_archive.db"),
                 "NODE_A_STATE_FILE": str(tmp_dir / "node_a_state.json"),
-                "NODE_B_URL": B_URL,
+                "NODE_B_URL": self.b_url,
                 "RETRY_INTERVAL_S": "0.5",
                 "REPLICATION_TIMEOUT_S": "2.0",
                 "MAX_WINDOW_TOKENS": "2000",
@@ -116,10 +133,10 @@ class ServerManager:
         )
 
     def start_b(self) -> None:
-        self._start("b", "node_b.app:app", 8002)
+        self._start("b", "node_b.app:app", self.b_port)
 
     def start_a(self) -> None:
-        self._start("a", "node_a.app:app", 8001)
+        self._start("a", "node_a.app:app", self.a_port)
 
     def stop(self, name: str) -> None:
         proc = self.procs.get(name)
@@ -146,7 +163,7 @@ class ServerManager:
     def restart_a(self) -> None:
         self.stop("a")
         self.start_a()
-        self.wait_health(A_URL)
+        self.wait_health(self.a_url)
 
     # -- readiness -------------------------------------------------------
 
@@ -184,29 +201,14 @@ class ServerManager:
         return "\n".join(chunks)
 
 
-def _assert_port_free(url: str) -> None:
-    try:
-        response = httpx.get(f"{url}/health", timeout=0.3)
-    except Exception:
-        return
-    if response.status_code == 200:
-        raise RuntimeError(
-            f"something is already listening at {url}; stop it before running tests"
-        )
-
-
-@pytest.fixture(scope="session")
-def servers(tmp_path_factory: pytest.TempPathFactory) -> ServerManager:
-    tmp_dir = tmp_path_factory.mktemp("pagerkv")
-    _assert_port_free(B_URL)
-    _assert_port_free(A_URL)
-
-    manager = ServerManager(tmp_dir)
+@pytest.fixture
+def servers(tmp_path: Path) -> ServerManager:
+    manager = ServerManager(tmp_path)
     try:
         manager.start_b()
-        manager.wait_health(B_URL)
+        manager.wait_health(manager.b_url)
         manager.start_a()
-        manager.wait_health(A_URL)
+        manager.wait_health(manager.a_url)
     except Exception:
         manager.stop_all()
         raise
@@ -215,43 +217,21 @@ def servers(tmp_path_factory: pytest.TempPathFactory) -> ServerManager:
     manager.stop_all()
 
 
-@pytest.fixture(scope="session")
-def base_urls() -> dict[str, str]:
-    return {"a": A_URL, "b": B_URL}
+@pytest.fixture
+def base_urls(servers: ServerManager) -> dict[str, str]:
+    return {"a": servers.a_url, "b": servers.b_url}
 
 
 @pytest.fixture
 def a_client(servers: ServerManager) -> httpx.Client:
-    with httpx.Client(base_url=A_URL, timeout=15.0) as client:
+    with httpx.Client(base_url=servers.a_url, timeout=15.0) as client:
         yield client
 
 
 @pytest.fixture
 def b_client(servers: ServerManager) -> httpx.Client:
-    with httpx.Client(base_url=B_URL, timeout=15.0) as client:
+    with httpx.Client(base_url=servers.b_url, timeout=15.0) as client:
         yield client
-
-
-@pytest.fixture(autouse=True)
-def reset_node_b_fault(servers: ServerManager) -> None:
-    """Every test starts (and ends) with Node B in normal mode."""
-    try:
-        httpx.post(
-            f"{B_URL}/admin/fault",
-            json={"mode": "none", "delay_s": 0},
-            timeout=5.0,
-        )
-    except Exception:
-        pass
-    yield
-    try:
-        httpx.post(
-            f"{B_URL}/admin/fault",
-            json={"mode": "none", "delay_s": 0},
-            timeout=5.0,
-        )
-    except Exception:
-        pass
 
 
 @pytest.fixture
