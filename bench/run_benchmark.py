@@ -410,6 +410,7 @@ def run() -> dict:
     with open(RESULTS_CSV, "w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(
             handle,
+            lineterminator="\n",
             fieldnames=[
                 "turn",
                 "baseline_tokens",

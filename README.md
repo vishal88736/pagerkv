@@ -1,98 +1,128 @@
 # PagerKV
 
-### REST-based Mini Distributed Key-Value Store with Replication Simulation
+### Visual REST replication for a bounded agent context
 
-PagerKV demonstrates how two HTTP services store and replicate key-value pairs.
-**Node A** accepts client writes and keeps the full value. Every PUT triggers an
-HTTP replication request to **Node B**, which stores a second full copy. A web
-dashboard shows both stores, replication results, and their consistency status.
+PagerKV lets an agent work with a small active context while retaining complete
+observations. **Node A** accepts key-value writes, keeps durable full values,
+and builds the active prompt. Every write attempts HTTP replication to **Node B**,
+which stores the full text and returns a short context stub. A block can leave
+the active prompt as full text only after its exact version is acknowledged.
 
-**Core concepts:** REST · HTTP verbs · primary-to-replica replication · consistency · failure recovery
+The dashboard shows this process as two isometric nodes: full blocks and stubs
+on A, acknowledged full copies on B, copying from A → B, and hydration from B → A.
 
-![PagerKV dashboard showing three matching key-value pairs on Node A and Node B](docs/images/dashboard-online.png)
+**Concepts:** REST · HTTP verbs · replication · versioned acknowledgments · consistency · context management
 
-*The running dashboard with both nodes online. The screenshots in this README
-use sample data written through the REST API to isolated local services.*
+![PagerKV context dashboard with full blocks and short stubs on Node A and full replicated copies on Node B](docs/images/dashboard-online.png)
+
+*Real dashboard capture using sample context observations. The active prompt is
+below its 2,000-token budget while both nodes retain the complete values.*
 
 ## Contents
 
-- [Problem statement and implementation](#problem-statement-and-implementation)
-- [How it works](#how-it-works)
+- [Problem statement alignment](#problem-statement-alignment)
+- [Architecture](#architecture)
+- [Replication and context paging](#replication-and-context-paging)
 - [Run locally](#run-locally)
-- [Use the REST API](#use-the-rest-api)
-- [Failure and recovery demo](#failure-and-recovery-demo)
-- [Consistency states](#consistency-states)
-- [Configuration and storage](#configuration-and-storage)
-- [Run with Docker](#run-with-docker)
-- [Project structure](#project-structure)
-- [Tests and checks](#tests-and-checks)
+- [Use the dashboard](#use-the-dashboard)
+- [REST API](#rest-api)
+- [Failure and recovery](#failure-and-recovery)
+- [Consistency and safety](#consistency-and-safety)
+- [Configuration](#configuration)
+- [Tests and benchmark](#tests-and-benchmark)
+- [Project layout](#project-layout)
 - [Scope and limitations](#scope-and-limitations)
 
-## Problem statement and implementation
+## Problem statement alignment
+
+The required mini distributed key-value store is the foundation. Context
+management is an application of that store: observation names become keys, and
+observation text becomes the value.
 
 | Requirement | Implementation |
 | --- | --- |
-| Build an HTTP service, Node A, to store key-value pairs | FastAPI service with a local SQLite database |
-| Add a second Node B service or module | Separate FastAPI service with its own SQLite database |
-| Every `PUT /key` triggers a replication call | A saves locally, then calls B over HTTP with the full value and version |
-| Track replication success and failure | Persistent attempt counters, per-key errors, and acknowledged versions |
-| Show a basic consistency status | Live comparison API and dashboard with clear status labels |
+| HTTP Node A stores key-value pairs | `PUT /key`, `GET /key/{key}`, and `DELETE /key/{key}` |
+| A second Node B service or local module | Independent FastAPI service with a SQLite archive |
+| Every PUT triggers replication to B | Both the key-value API and context API call the same HTTP replicator |
+| Track success and failure | Persistent attempt counters, per-key errors, and acknowledged versions |
+| Show basic consistency | Live full-value/version comparison, per-key states, and dashboard indicators |
+| Context integration | Token-aware active prompt, stubs, paging, search, and exact-text hydration |
 
-The project also includes GET and DELETE operations, automatic retries,
-version checks, restart persistence, and animated copying between nodes.
-
-## How it works
+## Architecture
 
 ```text
-Client / web dashboard
-         |
-         | PUT /key  {"key": "city", "value": "Bhilai"}
-         v
-+-----------------------------+
-| Node A · primary · :8001     |
-| Stores the complete value   |
-| SQLite: kv_node_a.db         |
-+-----------------------------+
-         |
-         | PUT /replicate/city
-         | Full value + version + deletion flag
-         v
-+-----------------------------+
-| Node B · replica · :8002     |
-| Stores the complete copy    |
-| SQLite: kv_node_b.db         |
-+-----------------------------+
-         |
-         +---- acknowledgment returned to Node A
+                         Client / agent / dashboard
+                                   |
+                     PUT /key or PUT /context/{key}
+                                   v
+              +----------------------------------------+
+              | Node A · primary · localhost:8001       |
+              |                                        |
+              | Complete local key-value backing store |
+              |          +                             |
+              | Active context: full blocks + stubs    |
+              | Token budget, priority/LRU, pinning    |
+              | JSON checkpoint for restart recovery  |
+              +----------------------------------------+
+                          |                  ^
+          POST /replicate |                  | GET /archive/{key}
+          full text + vN  |                  | exact-text hydration
+                          v                  |
+              +----------------------------------------+
+              | Node B · replica · localhost:8002       |
+              |                                        |
+              | SQLite: current full value and version |
+              | Deterministic stub + SHA-256 digest     |
+              | Deletion watermarks + archive search  |
+              +----------------------------------------+
 ```
 
-1. **Save locally.** Node A writes the value and its new version to SQLite.
-2. **Attempt replication.** A sends an HTTP request to B and waits for a response.
-3. **Validate the acknowledgment.** The returned key, value, version, and deletion
-   flag must match the request before A marks the update as replicated.
-4. **Record the result.** Success or failure increments the corresponding counter.
-5. **Retry failures.** Unacknowledged updates remain stored on A and retry in the
-   background, every three seconds by default.
+A's **active context** and **complete local values** are separate views. Paging
+shortens what goes into the prompt; it does not remove the primary value.
+`GET /key/{key}` reads that complete local value without changing the prompt.
+`GET /context/{key}?hydrate=true` explicitly brings archived context back through
+B and updates the active view.
 
-GET requests to A always use its own full local value. B being unavailable does
-not prevent A from serving previously stored values or accepting new writes.
+"RAM" and "disk" describe the context roles. Both nodes are Python HTTP services;
+A's checkpoint also persists full values. The context token budget does not bound
+the total memory or disk used by the service.
 
-Versions protect against delayed or conflicting requests. B rejects older
-versions and different payloads claiming the same version; an identical retry is
-safe. If B already has a conflicting version, A advances its current update above
-that version and retries. DELETE uses a versioned deletion record, or
-*tombstone*, to prevent an older request from restoring a deleted key.
+## Replication and context paging
+
+For a context block such as `db_schema`:
+
+1. **Save:** A stores the full text locally and increments its version.
+2. **Replicate:** A sends the key, full text, and version to B over HTTP.
+3. **Acknowledge:** B stores the text and returns its version, digest, and stub.
+4. **Validate:** A checks the acknowledgment's key, version, and content digest.
+5. **Page when needed:** If the prompt exceeds its budget, acknowledged,
+   unpinned blocks can become short stubs in the active view. Lower priority
+   blocks go first, followed by least recently used blocks.
+6. **Hydrate:** An explicit context read fetches full text from B, verifies the
+   version, and makes it available in the active context again. Other eligible
+   blocks may page out to make room.
+
+Replication and paging are separate events. B receives the full copy even when
+A still has room to keep the block resident.
+
+### Context states
+
+| Residence | Meaning |
+| --- | --- |
+| `RESIDENT_FULL` | The active context holds the complete text |
+| `PAGED_TO_NODE_B` | The active view uses a stub; B holds the acknowledged full copy |
+| `SPILLED_LOCAL` | Optional outage mode: a dirty block uses a local stub while its complete text stays on A |
+
+Tokens are counted through `common/tokens.py`, using `tiktoken`'s `cl100k_base`
+encoding when available, with an approximate fallback. The budget includes prompt
+headers and stubs. When many cold stubs would fill the prompt, an `archive_index`
+keeps their keys discoverable through the index, status, search, and direct reads.
+A stub is an extractive summary and retrieval reference; it is not the original text.
 
 ## Run locally
 
-### Requirements
-
-- Python 3.12 or newer is recommended and used by CI.
-- Bash for the launcher below; commands are shown for Linux/macOS.
-- Ports **8001** and **8002** available.
-- Node.js 22+ only if you want to run the dashboard behavior checks.
-
-Run these commands from the `pagerkv` directory:
+Use Python 3.12+ and Bash. Node.js 22+ is optional for dashboard behavior checks.
+Run these commands from `pagerkv`:
 
 ```bash
 python -m venv .venv
@@ -101,338 +131,346 @@ python -m pip install -r requirements-dev.txt
 bash scripts/run_nodes.sh
 ```
 
-For an application-only installation, use `requirements.txt` instead of
-`requirements-dev.txt`.
+For a runtime-only installation, use `requirements.txt` instead.
 
-| Surface | Local URL |
-| --- | --- |
-| Web dashboard | [http://127.0.0.1:8001/ui](http://127.0.0.1:8001/ui) |
-| Node A interactive API docs | [http://127.0.0.1:8001/docs](http://127.0.0.1:8001/docs) |
-| Node B interactive API docs | [http://127.0.0.1:8002/docs](http://127.0.0.1:8002/docs) |
-
-The launcher starts both services on localhost. Press **Ctrl+C** to stop them;
-the databases remain available for the next run.
-
-<details>
-<summary>Use the existing virtual environment in the parent directory</summary>
-
-If your workspace already has `DS/.venv`, run this from `DS/pagerkv`:
+If using the existing environment at `DS/.venv`, run from `DS/pagerkv`:
 
 ```bash
 PYTHON="../.venv/bin/python" bash scripts/run_nodes.sh
 ```
 
-</details>
+| Surface | URL |
+| --- | --- |
+| Dashboard | [http://127.0.0.1:8001/ui](http://127.0.0.1:8001/ui) |
+| Node A API docs | [http://127.0.0.1:8001/docs](http://127.0.0.1:8001/docs) |
+| Node B API docs | [http://127.0.0.1:8002/docs](http://127.0.0.1:8002/docs) |
 
-<details>
-<summary>Start the services in two separate terminals</summary>
+The launcher starts B on port 8002 and A on port 8001. Both bind to localhost.
+Press **Ctrl+C** to stop them; persisted data remains for the next run.
 
-Activate your virtual environment and run from `pagerkv` in each terminal.
-
-**Terminal 1 — Node B:**
+To start the services separately, activate the environment and run from `pagerkv`
+in two terminals:
 
 ```bash
+# Terminal 1
 python -m uvicorn node_b.app:app --host 127.0.0.1 --port 8002
-```
 
-**Terminal 2 — Node A:**
-
-```bash
+# Terminal 2
 python -m uvicorn node_a.app:app --host 127.0.0.1 --port 8001
 ```
 
-Stop each service with Ctrl+C. Run one process per node; do not add multiple workers.
-
-</details>
-
-## Use the REST API
-
-Keys and values are strings. Keys contain **1–512 characters** without control
-characters; values contain at most **1,000,000 characters**. Empty values are
-allowed. Keys containing slashes are supported.
-
-### Endpoints
-
-| Method | Node A endpoint | Purpose |
-| --- | --- | --- |
-| `PUT` | `/key` | Create or update a key using `{"key":"...","value":"..."}` |
-| `PUT` | `/key/{key}` | Create or update the named key using `{"value":"..."}` |
-| `GET` | `/key/{key}` | Read its complete value and replication metadata |
-| `DELETE` | `/key/{key}` | Delete locally and replicate the deletion |
-| `GET` | `/keys` | List live keys and their replication metadata |
-| `GET` | `/replication/status` | Compare both nodes and inspect replication counters |
-| `GET` | `/health` | Check whether Node A is running |
-| `GET` | `/admin/node_b/fault` | Read the current failure simulation mode |
-| `POST` | `/admin/node_b/fault` | Set B to online, slow, or down |
-
-Node B provides `GET /key/{key}`, `GET /keys`, `GET /health`, the internal
-`PUT /replicate/{key}` endpoint, and its own `/admin/fault` controls.
-`/kv/{key}` remains a compatibility alias for Node A's PUT, GET, and DELETE routes.
-
-### 1. Create a key and replicate it
-
-```bash
-curl -sS -X PUT http://127.0.0.1:8001/key \
-  -H 'Content-Type: application/json' \
-  -d '{"key":"city","value":"Bhilai"}'
-```
-
-A successful first write to a new key returns:
-
-```json
-{
-  "key": "city",
-  "value": "Bhilai",
-  "version": 1,
-  "deleted": 0,
-  "acked_version": 1,
-  "error": null,
-  "replicated": true,
-  "consistency_status": "synced",
-  "node": "A"
-}
-```
-
-`replicated: true` means B acknowledged that version. If B is unavailable, the
-PUT still returns HTTP 200 after saving locally, with `replicated: false`,
-`consistency_status: "pending"`, and an error explaining the replication failure.
-
-### 2. Read the value from each node
-
-```bash
-curl -sS http://127.0.0.1:8001/key/city
-curl -sS http://127.0.0.1:8002/key/city
-```
-
-Both return `Bhilai` as the value after replication succeeds.
-
-### 3. Update the value
-
-```bash
-curl -sS -X PUT http://127.0.0.1:8001/key/city \
-  -H 'Content-Type: application/json' \
-  -d '{"value":"Raipur"}'
-```
-
-The version increases, and A attempts replication again.
-
-### 4. Check consistency
-
-```bash
-curl -sS http://127.0.0.1:8001/replication/status
-```
-
-The response includes `consistency`, `pending`, replication attempt counters,
-and snapshots of `node_a` and `node_b`. If B cannot be checked, `node_b` is `null`.
-
-### 5. Delete the key
-
-```bash
-curl -sS -X DELETE http://127.0.0.1:8001/key/city
-```
-
-DELETE returns HTTP **200** when B acknowledges it, or **202** if replication is
-pending. GET then returns **404** on A. B returns 404 after the deletion reaches it.
-Deletion is safe to repeat; recreating a key uses a newer version.
-
-Invalid request bodies or validated key names return **422**. Requests for a
-missing or deleted key return **404**.
-
-## Failure and recovery demo
-
-### Dashboard walkthrough
-
-1. Open the dashboard and save `city` with value `Bhilai`. Both tables show the copy.
-2. Choose **Down** under Node B mode and click **Apply mode**.
-3. Update `city` to `Raipur`. A retains the new value; replication fails and the
-   pending count increases. **GET · read from A** still returns `Raipur`.
-4. Consistency becomes **Unknown · B unavailable**, because B's current contents
-   cannot be inspected.
-5. Choose **Online** and click **Apply mode**. Background retry copies the latest
-   value to B. Both tables show `Raipur`, and consistency returns to **In sync**.
-6. Try **Slow** to exercise timeouts, or delete a key while B is down to observe
-   deletion recovery.
-
-**During the outage:** Node A serves `Raipur` at version 2, the pending count is
-one, and the dashboard explicitly marks B's contents as unavailable.
-
-![Dashboard during a Node B outage, with one pending update retained on Node A](docs/images/dashboard-node-b-down.png)
-
-**After recovery:** both nodes hold `Raipur` at version 2 and pending work returns
-to zero. The failed-attempt counter remains as a record of the earlier failure.
-
-![Dashboard after recovery, with matching version 2 values on both nodes](docs/images/dashboard-recovered.png)
-
-The animation illustrates requests and acknowledgments observed by the dashboard.
-Reduced-motion preferences disable packet movement. The dashboard checks status
-every two seconds and marks its last snapshot as stale if A becomes unavailable.
-
-### Reproduce the outage through HTTP
-
-With both services running:
-
-```bash
-# Simulate Node B being down.
-curl -sS -X POST http://127.0.0.1:8001/admin/node_b/fault \
-  -H 'Content-Type: application/json' -d '{"mode":"down"}'
-
-# Save on A while replication cannot succeed.
-curl -sS -X PUT http://127.0.0.1:8001/key/city \
-  -H 'Content-Type: application/json' -d '{"value":"Raipur"}'
-
-# Confirm A still serves the complete value.
-curl -sS http://127.0.0.1:8001/key/city
-
-# Restore B; automatic retries resume copying.
-curl -sS -X POST http://127.0.0.1:8001/admin/node_b/fault \
-  -H 'Content-Type: application/json' -d '{"mode":"none"}'
-
-# Check again after a retry has completed.
-curl -sS http://127.0.0.1:8001/replication/status
-```
-
-Use `{"mode":"slow","delay_s":3}` to simulate slow data requests. A timeout
-means the write was not acknowledged within the deadline; B may still finish
-processing it later. Version checks make the subsequent retry safe.
-
-If an admin token is configured, add `-H 'X-Admin-Token: YOUR_TOKEN'` to the fault
-control requests. Simulated failure affects B's data endpoints; its health and
-admin endpoints remain available so you can restore it.
-
-## Consistency states
-
-`GET /replication/status` compares full values, versions, and deletion records
-while holding A's writer lock.
-
-| API state | Dashboard label | Meaning |
-| --- | --- | --- |
-| `in_sync` | In sync | The comparison matches and A has no unacknowledged updates |
-| `pending` | Pending replication | B responded, but A has writes or deletes awaiting acknowledgment |
-| `diverged` | Diverged | B responded and there is no pending work, but the datasets differ |
-| `unknown` | Unknown · B unavailable | B could not be checked, including during an outage or timeout |
-
-Per-key `synced` / `pending` metadata describes acknowledgment history. The global
-status also checks B's current contents, so an earlier acknowledgment alone does
-not prove the stores still match.
-
-Counters count **replication attempts**, including background retries. Several
-writes during an outage retain the newest unacknowledged state for each key;
-this is not a queue containing every historical value.
-
-## Configuration and storage
-
-Set environment variables before starting the services.
-
-| Variable | Default | Used by | Purpose |
-| --- | --- | --- | --- |
-| `NODE_B_URL` | `http://127.0.0.1:8002` | A | Replica HTTP address |
-| `NODE_A_DB` | `kv_node_a.db` | A | Primary SQLite file |
-| `NODE_B_DB` | `kv_node_b.db` | B | Replica SQLite file |
-| `REPLICATION_TIMEOUT_S` | `2` | A | Timeout for each HTTP request to B |
-| `RETRY_INTERVAL_S` | `3` | A | Delay between background retry passes |
-| `PAGERKV_ADMIN_TOKEN` | unset | Both | Token protecting failure controls; otherwise loopback clients only |
-| `PYTHON` | `python` | Launcher | Python executable used for both services |
-
-Each node has a separate SQLite database with write-ahead logging. Complete
-values, versions, deletion records, pending work, and A's counters survive restart.
-Local database files are ignored by Git.
-
-Older `node_a_state.json` and `node_b_archive.db` files, if present, are preserved
-and are not imported into these databases.
-
-## Run with Docker
-
-From `pagerkv`, with Docker Engine and Docker Compose available:
+### Docker
 
 ```bash
 PAGERKV_ADMIN_TOKEN=choose-your-own-demo-token docker compose up --build
 ```
 
-Open the same dashboard URL: **http://127.0.0.1:8001/ui**. When using failure
-controls, enter that token when the dashboard asks for it. It stays in page memory.
-The same token is passed to both nodes, and A forwards it to B for admin requests.
+Open the same dashboard URL. Enter that token if the failure controls request it.
+Each container has its own data volume, and ports are published on localhost only.
+Stop without removing the data using `docker compose down`.
 
-Each container uses its own named volume. Ports are published on localhost only.
-To stop the containers while retaining their data:
+## Use the dashboard
+
+- **Node view:** tall blocks represent full text, short dashed blocks represent
+  context stubs. B shows every acknowledged copy, including blocks still resident
+  on A. Hover or select a block to inspect it.
+- **Replication strip and connector:** illustrate copying A → B and hydration
+  B → A. Failures show red feedback; reduced-motion preferences disable movement.
+- **Context statistics:** show active tokens, the budget, page faults, dirty keys,
+  and prompt tokens saved by paging. Tokens saved are prompt savings, not disk savings.
+- **Context Keys / Inspect:** inspect residence and replication independently,
+  read the complete local value, hydrate from B, delete, pin, or change priority.
+- **Add/update context:** enter a key and observation text, then PUT it. Add several
+  substantial observations to see the window fill and acknowledged blocks page out.
+- **Search / Rendered Prompt:** find archived observations and see the actual text
+  an agent would place in its prompt.
+- **Timeline / Benchmark replay:** inspect live token changes or replay the benchmark CSV.
+
+The dashboard polls status every 1.5 seconds. Its animations illustrate observed
+requests and acknowledgments; they are not network packet captures. If A becomes
+unavailable, displayed status is explicitly marked stale.
+
+## REST API
+
+### Primary key-value API
+
+| Method | Node A route | Behavior |
+| --- | --- | --- |
+| `PUT` | `/key` | Accept `{"key":"...","value":"..."}`, save, replicate, and update context |
+| `PUT` | `/key/{key}` | Accept `{"value":"..."}` for a named key |
+| `GET` | `/key/{key}` | Return the complete local value without hydrating the context |
+| `DELETE` | `/key/{key}` | Remove the value and context entry; replicate a versioned deletion |
+| `GET` | `/keys` | List keys, versions, complete local values, and local availability |
+| `GET` | `/replication/status` | Return counters, per-state counts, and a live comparison result |
+
+Example:
 
 ```bash
-docker compose down
+curl -sS -X PUT http://127.0.0.1:8001/key \
+  -H 'Content-Type: application/json' \
+  -d '{"key":"db_schema","value":"Postgres schema: users, orders, payments."}'
+
+curl -sS http://127.0.0.1:8001/key/db_schema
+curl -sS http://127.0.0.1:8002/key/db_schema
+curl -sS http://127.0.0.1:8001/replication/status
 ```
 
-The Compose file defines the node addresses and database paths for Docker.
-The additional timing settings above describe direct local launches; they are
-not forwarded from the host by the supplied Compose file.
+PUT returns HTTP 200 after a successful local write. `replicated: true` means B
+acknowledged that version; `false` means the accepted local value awaits successful
+replication. The response also includes the version, consistency state, and any
+`replication_error`. A failed local checkpoint write raises an error before the
+replication request is sent.
 
-## Project structure
+DELETE returns **204**. If B is unavailable, A persists the pending deletion and
+retries it. GET returns **404** after local deletion. Recreating the key uses a
+version newer than the deletion watermark.
+
+### Context API
+
+| Method | Route | Behavior |
+| --- | --- | --- |
+| `PUT` | `/context/{key}` | Accept `{"text":"..."}`; save and replicate the same underlying value |
+| `GET` | `/context/{key}` | Return its current full text or stub |
+| `GET` | `/context/{key}?peek=true` | Read the view without changing LRU access order |
+| `GET` | `/context/{key}?hydrate=true` | Restore the exact full context from B or a local spill |
+| `PATCH` | `/context/{key}` | Change `pinned` or `priority` |
+| `DELETE` | `/context/{key}` | Delete the shared value and context entry |
+| `GET` | `/context/status?include_text=false` | Inspect context, replication, and local-value counts without full text |
+| `GET` | `/context/prompt` | Return the rendered active prompt and token count |
+| `GET` | `/context/search?q=...&limit=5` | Search local keys and the archive |
+
+```bash
+curl -sS -X PUT http://127.0.0.1:8001/context/observation_1 \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"The billing API depends on the orders table."}'
+
+curl -sS http://127.0.0.1:8001/context/prompt
+curl -sS 'http://127.0.0.1:8001/context/observation_1?hydrate=true'
+curl -sS 'http://127.0.0.1:8001/context/search?q=billing&limit=5'
+```
+
+`/kv/{key}` is retained as a compatibility API. Its GET returns the complete
+value through the context hydration path; `/key/{key}` is the direct local read.
+
+Keys contain 1–512 characters without control characters, and values/text are
+strings of at most 1,000,000 characters. Empty values are allowed through the API.
+Slashes in key names are supported. The exact keys `status`, `prompt`, and `search`
+are reserved on the context-writing route because those names serve static routes.
+
+Hydration returns **503** with an error and stub if the required B copy is
+unavailable, or **409** if its version differs. A locally retained full value can
+still be read through `/key/{key}` while B is offline.
+
+### Node B and failure controls
+
+B exposes `POST /replicate`, `GET /archive/{key}`, `GET /key/{key}`, `GET /keys`,
+`GET /search`, `GET /health`, and `GET /ready`. Normal clients write through A.
+The archive's current full value can be inspected with:
+
+```bash
+curl -sS http://127.0.0.1:8002/archive/db_schema
+```
+
+A proxies B's failure controls at `GET /admin/node_b/fault` and
+`POST /admin/node_b/fault`:
+
+```bash
+# Down: data requests fail with 503.
+curl -sS -X POST http://127.0.0.1:8001/admin/node_b/fault \
+  -H 'Content-Type: application/json' -d '{"mode":"down","delay_s":0}'
+
+# Slow: data requests take longer than the default replication timeout.
+curl -sS -X POST http://127.0.0.1:8001/admin/node_b/fault \
+  -H 'Content-Type: application/json' -d '{"mode":"slow","delay_s":3}'
+
+# Restore normal operation.
+curl -sS -X POST http://127.0.0.1:8001/admin/node_b/fault \
+  -H 'Content-Type: application/json' -d '{"mode":"none","delay_s":0}'
+```
+
+B also exposes these controls directly at `/admin/fault`. Its health and admin
+endpoints remain available during simulation; the process stays running.
+If a token is configured, add `-H 'X-Admin-Token: YOUR_TOKEN'` to admin requests.
+
+## Failure and recovery
+
+1. Add several context blocks until some acknowledged blocks become stubs.
+2. Set B to **Down** and add more observations.
+3. The new observations become dirty. With the default `SPILL_DIRTY=0`, they stay
+   full in the active context, even if the prompt exceeds its token budget.
+4. Read complete retained values through **Read full local value**. An explicit
+   B-backed hydration of a paged block can fail while B is down.
+5. Restore B to **Online**. Background retries acknowledge the dirty versions,
+   allowing context compaction to return under budget when no other constraint blocks it.
+6. Select a paged key and hydrate it to see its full text return to the active view.
+
+![Node B outage with dirty amber context blocks retained on A, an over-budget prompt, and unavailable replica status](docs/images/dashboard-node-b-down.png)
+
+*During the outage, context safety takes priority over the token budget. The red
+B floor indicates unavailability, not deletion of its previously stored data.*
+
+![Recovered replication with nine archived copies, a hydrated context block, and the active prompt back under budget](docs/images/dashboard-recovered.png)
+
+*After recovery, all nine values are acknowledged, dirty count is zero, and a
+successful archive hydration is recorded as a page fault.*
+
+Set `SPILL_DIRTY=1` before launch to enable the alternate local-spill mode. Dirty
+text remains on A, but can leave the active prompt as a marked local stub. This
+helps preserve the token cap during an outage. Pinned or unsqueezable context
+can still prevent the budget from being met; the service reports `over_budget`.
+
+## Consistency and safety
+
+Per-key replication follows:
 
 ```text
-pagerkv/
-├── common/
-│   ├── admin.py              # Access control for failure simulation
-│   ├── schemas.py            # REST request validation
-│   ├── store.py              # SQLite values, versions, deletion records, counters
-│   └── validation.py         # Shared key and value limits
-├── node_a/
-│   ├── app.py                # Primary REST API, consistency comparison, dashboard
-│   ├── config.py             # Environment configuration
-│   ├── replicator.py         # HTTP calls to Node B and acknowledgment checks
-│   └── state.py              # Ordered writes and background retries
-├── node_b/
-│   └── app.py                # Replica API and failure simulation
-├── ui/
-│   └── index.html            # Dashboard; no frontend build step
-├── docs/images/              # Screenshots embedded in this README
-├── scripts/run_nodes.sh      # Start and stop the two local services
-├── tests/                    # Backend integration and dashboard behavior checks
-├── .github/workflows/ci.yml  # Lint, typing, tests, and Docker build jobs
-├── Dockerfile
-├── docker-compose.yml
-├── requirements.txt
-└── requirements-dev.txt
+PUT → PENDING_REPLICATION → exact acknowledgment → SYNCED_ARCHIVED
+                         ↘ timeout / failure → DIRTY_UNREPLICATED
+                                                |
+                                                └─ background retry → acknowledgment
 ```
 
-## Tests and checks
+`GET /replication/status` exposes both the compatible coarse field
+`consistency: consistent | degraded` and a more specific live `comparison_status`:
 
-Install `requirements-dev.txt` and activate the virtual environment, then run:
+| Comparison | Meaning |
+| --- | --- |
+| `in_sync` | Current key sets, versions, and full values match, with no pending work |
+| `pending` | B responded, but A has unacknowledged writes or deletions |
+| `diverged` | B responded and no work is pending, but its live dataset differs |
+| `unknown` | B could not be checked, or a legacy local value has not yet been recovered |
+
+`differing_keys` identifies mismatches when B can be inspected. Historical
+acknowledgments alone do not prove the present datasets still match. Counters
+measure write-replication attempts, including retries, rather than unique user writes.
+Pending deletions are reported separately.
+
+Safety rules:
+
+- Only the exact acknowledged version can be paged out of the active context.
+- Pending or dirty text is never treated as a safely archived block.
+- The durable local full value is kept independently of context compaction.
+- Old acknowledgments cannot mark a newer update as synced.
+- B rejects stale versions; identical same-version retries are idempotent.
+- Versioned deletion watermarks prevent delayed writes from resurrecting deleted keys.
+- No block is silently truncated to satisfy the budget.
+- Corrupt checkpoints fail to load rather than being replaced with empty state.
+
+## Configuration
+
+Settings are read when each service starts.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `NODE_B_URL` | `http://127.0.0.1:8002` | B's address as seen by A |
+| `MAX_WINDOW_TOKENS` | `2000` | Active-prompt budget |
+| `INDEX_BUDGET_TOKENS` | `150` | Tokens reserved for the archive index |
+| `REPLICATION_TIMEOUT_S` | `2.0` | Timeout for each A → B call |
+| `RETRY_INTERVAL_S` | `3.0` | Delay between retry passes |
+| `NODE_A_STATE_FILE` | `node_a_state.json` | A's atomic checkpoint, including durable full values |
+| `SPILL_DIRTY` | `0` | Keep dirty active text full; `1` enables local spilling |
+| `NODE_B_DB` | `node_b_archive.db` | B's SQLite archive |
+| `PAGERKV_ADMIN_TOKEN` | unset | Protect admin controls; without a token, only loopback clients are allowed |
+| `PYTHON` | `python` | Interpreter used by the Bash launcher |
+
+A persists state atomically with flush/fsync; B uses SQLite with WAL. Both retain
+state across normal service restarts. Legacy context checkpoints can recover
+missing local full values from matching versions on B. Until recovered, a missing
+legacy value is reported explicitly rather than returned as a stub.
+
+The separate `kv_node_a.db` / `kv_node_b.db` files from the plain-store version,
+if present, remain untouched and are not automatically imported.
+
+## Tests and benchmark
 
 ```bash
 python -m pytest -q
+node --test tests/dashboard.test.cjs
 ruff check .
 mypy
 ```
 
-With Node.js 22+ installed:
+Backend tests start isolated service pairs on ephemeral ports with temporary
+state. They cover context budgeting, safe paging, exact hydration, replication
+failures and recovery, stale acknowledgments, deletion watermarks, local full-value
+reads during outages, restart/legacy recovery, and checkpoint failures.
+
+Dashboard checks use a simulated DOM for node-copy rendering, HTML escaping,
+copy/hydration direction, reduced motion, recovery feedback, and full local reads.
+The README screenshots are actual Chromium captures of the running services.
+
+### Reproducible context benchmark
 
 ```bash
-node --test tests/dashboard.test.cjs
+SPILL_DIRTY=0 python bench/run_benchmark.py --check
+python bench/plot.py
 ```
 
-Backend tests start isolated services with temporary databases. Coverage includes
-HTTP CRUD, full-copy retention, simulated and real process outages, slow responses,
-recovery, restart persistence, version conflicts, stale writes, deletion retry,
-input validation, and admin-token forwarding.
+The benchmark uses 100 deterministic sample observations and a simulated agent
+workflow. B is down during turns 40–49. It verifies exact-text recovery and recall
+through prompt/search/hydration; it does not call a real LLM.
 
-Dashboard checks exercise value display, HTML escaping, animation states,
-reduced motion, stale-status handling, and PUT behavior with a simulated DOM.
-The screenshots above were captured from the running website with Chromium.
+The latest local safety-mode run produced:
 
-CI is configured to run lint, type checks, backend tests, dashboard checks, and
-a Docker image build. A local check passing does not imply a remote CI run or
-container deployment has completed.
+| Measure | Result |
+| --- | --- |
+| Turns completed | 100 |
+| Full values recovered exactly | 100 / 100 |
+| Maximum prompt outside the outage window | 1,999 tokens |
+| Maximum prompt including the outage | 6,734 tokens |
+| Recall outside the outage | 28 / 28 |
+| Overall recall | 29 / 30 |
+| Baseline exceeds its 2,000-token budget | Turn 3 |
+
+The outage peak is expected with dirty spilling disabled: full dirty observations
+stay in context until acknowledgment. The recall miss occurs while the needed
+archive content cannot be hydrated. Scheduling can change page-fault counts and
+some prompt footprints between runs; `bench/results.csv` contains the current data.
+
+![Context benchmark showing the outage budget spike, recovery, and the baseline stopping at its budget](bench/benchmark.png)
+
+`--check` verifies lossless recovery, the healthy-window budget, and recall outside
+the fault window. With `SPILL_DIRTY=1`, it also checks the all-turn prompt cap.
+CI is configured to run lint, type checks, tests, the context benchmark, and a
+Docker build. These configuration entries are not a claim of remote CI execution.
+
+## Project layout
+
+```text
+pagerkv/
+├── common/               # Token counting, schemas, summaries, validation, admin guard
+├── node_a/
+│   ├── app.py            # REST/context APIs, live comparison, dashboard hosting
+│   ├── state.py          # Local full values, active view, paging, retry, hydration
+│   ├── replicator.py     # HTTP archive client and acknowledgment validation
+│   └── config.py         # Environment settings
+├── node_b/
+│   ├── app.py            # Replica endpoints and fault simulation
+│   └── archive.py        # SQLite storage, version guards, watermarks, search
+├── ui/index.html         # Isometric nodes, event-driven animation, context controls
+├── bench/                # Deterministic benchmark, raw CSV, and chart
+├── docs/images/          # Website screenshots
+├── scripts/run_nodes.sh  # Two-node launcher
+├── tests/                # Backend and dashboard checks
+├── Dockerfile
+└── docker-compose.yml
+```
 
 ## Scope and limitations
 
-- **One primary and one replica.** There is no leader election, automatic failover,
+- The archive stores the **current version** of each live key plus deletion
+  watermarks. It is not a history of every past version.
+- The 2,000-token setting limits the active prompt when safe compaction is
+  possible. Dirty full blocks and pinned blocks can make it exceed the budget.
+- Context stubs are deterministic extractive summaries. No live LLM or semantic
+  summarizer is integrated.
+- A local full-value read and B-backed context hydration are intentionally
+  different operations. Keeping a local value does not automatically hydrate it.
+- Both nodes assume a single process. There is no leader election, failover,
   quorum, or distributed consensus.
-- **Single-process nodes.** A uses one in-process writer lock. Run one worker per node.
-- **Eventual recovery.** A waits for the initial replication attempt; a locally
-  accepted write can remain pending while B is unavailable.
-- **Trusted local use.** Data endpoints have no authentication or TLS. The token
-  protects failure controls. B's replication endpoint is an internal trusted API.
-- **Divergence is reported.** Pending updates retry automatically, but a replica
-  containing extra data or losing already acknowledged data is not automatically
-  rebuilt. The live comparison reports the difference.
-- **Small datasets.** Status checks compare complete snapshots, and the dashboard
-  polls them. This is intended for learning and demonstration.
-- **Local durability.** Persistence survives service restarts, but deleting a
-  node's database is not equivalent to restarting the service.
+- Data endpoints are unauthenticated and have no TLS. This is a trusted local
+  teaching/demo setup; the token protects failure controls.
+- Live comparison reports divergence but does not automatically rebuild a lost
+  archive or remove unexpected data written directly to B.
+- Complete checkpoints and full-value comparisons suit small datasets. The
+  service's total memory and disk usage grow with the data.

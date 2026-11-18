@@ -808,7 +808,7 @@ svg.chart{display:block; width:100%; height:220px}
     const r = await api(`/context/${enc(selected)}?hydrate=true`);
     if (r.ok) {
       $("detailOut").textContent = r.body.full_text;
-      transfer(r.body.source === "L2_PAGE_FAULT" ? "hydrated" : "ok", `${selected} — full context restored via ${r.body.source}.`);
+      transfer(r.body.source === "L2_PAGE_FAULT" ? "hydrated" : "idle", `${selected} — full context restored via ${r.body.source}.`);
       toast(r.body.source === "L2_PAGE_FAULT" ? `Page fault: ${selected} hydrated from Node B`
         : r.body.source === "L1_SPILL" ? `Page fault: ${selected} restored from Node A's local spill`
         : `${selected} served from L1`);

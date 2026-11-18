@@ -242,10 +242,9 @@ class NodeAState:
                 payload = json.load(handle)
         except (OSError, ValueError):
             logger.exception("could not load Node A state from %s", self.state_file)
-            return
+            raise
         if not isinstance(payload, dict):
-            logger.error("state file %s is not a JSON object", self.state_file)
-            return
+            raise ValueError(f"state file {self.state_file} is not a JSON object")
 
         try:
             self.page_faults = int(payload.get("page_faults", 0))
@@ -771,6 +770,8 @@ class NodeAState:
             }
 
     async def recover_local_values(self, replicator: Replicator) -> None:
+        if all(key in self.full_values for key in self.entries) or not await replicator.ready():
+            return
         for key in list(self.entries):
             if key not in self.full_values:
                 try:

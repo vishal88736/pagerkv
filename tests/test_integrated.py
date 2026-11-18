@@ -6,6 +6,7 @@ import json
 import time
 
 import httpx
+import pytest
 
 from node_a.replicator import Replicator
 
@@ -151,3 +152,28 @@ def test_ack_requires_matching_key_and_digest():
                 assert not result.ok and "mismatch" in result.error
 
     asyncio.run(run())
+
+
+def test_corrupt_checkpoint_is_not_silently_overwritten(tmp_path):
+    from node_a.state import NodeAState
+
+    checkpoint = tmp_path / "state.json"
+    checkpoint.write_text("{invalid-json")
+    with pytest.raises(ValueError):
+        NodeAState(state_file=str(checkpoint))
+    assert checkpoint.read_text() == "{invalid-json"
+
+
+def test_persistence_failure_does_not_send_a_replication_request(tmp_path):
+    from node_a.state import NodeAState
+
+    class NotCalled:
+        async def replicate(self, key, version, text):
+            raise AssertionError("Replication must not begin before persistence succeeds")
+
+    state = NodeAState(state_file=str(tmp_path / "state.json"))
+    directory = tmp_path / "directory"
+    directory.mkdir()
+    state.state_file = str(directory)
+    with pytest.raises(OSError):
+        asyncio.run(state.put("example", "keep safe", NotCalled()))
