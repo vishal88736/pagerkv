@@ -40,6 +40,7 @@ DIRTY_UNREPLICATED = "DIRTY_UNREPLICATED"
 
 _RESIDENCES = {RESIDENT_FULL, PAGED_TO_NODE_B, SPILLED_LOCAL}
 _STATUSES = {PENDING_REPLICATION, SYNCED_ARCHIVED, DIRTY_UNREPLICATED}
+_KEY_SUFFIX = re.compile(r"^(.*?)(\d+)$")
 
 
 class KeyNotFound(Exception):
@@ -68,7 +69,7 @@ def compress_key_ranges(keys: list[str]) -> str:
     groups: dict[str, list[int]] = {}
     others: list[str] = []
     for key in keys:
-        match = re.match(r"^(.*?)(\d+)$", key)
+        match = _KEY_SUFFIX.match(key)
         if match:
             prefix, number = match.group(1), int(match.group(2))
             groups.setdefault(prefix, []).append(number)
@@ -439,30 +440,72 @@ class NodeAState:
         if not paged_indices:
             return self._cache_render(signature, full_prompt, 0, 0)
 
-        removed: set[int] = set()
-        for idx in paged_indices:  # oldest first
-            removed.add(idx)
-            omitted_keys = [
-                ordered[i].key for i in reversed(paged_indices) if i in removed
-            ]
-            omitted_tokens = sum(ordered[i].full_tokens for i in removed)
-            index_block = self._build_index_block(
-                len(removed), omitted_keys, omitted_tokens
+        # Pick how many cold blocks to fold into archive_index.  The index is
+        # capped at index_budget_tokens, so reserving that budget while
+        # comparing block totals avoids rebuilding the index for every
+        # candidate; the exact prompt is then counted once and adjusted.
+        block_tokens = [count_tokens(block) for block in blocks]
+        total_block_tokens = sum(block_tokens)
+        prefix_tokens = [0]
+        for idx in paged_indices:
+            prefix_tokens.append(prefix_tokens[-1] + block_tokens[idx])
+        total = len(blocks)
+
+        available = (
+            self.max_window_tokens - self.index_budget_tokens - 2
+        )
+        remove_count = len(paged_indices)
+        for candidate in range(1, len(paged_indices) + 1):
+            remaining_count = total - candidate
+            remaining_tokens = (
+                total_block_tokens
+                - prefix_tokens[candidate]
+                + 2 * max(0, remaining_count - 1)
             )
-            index_tok = count_tokens(index_block)
-            remaining = "\n\n".join(
-                b for i, b in enumerate(blocks) if i not in removed
-            )
-            remaining_tok = count_tokens(remaining)
-            sep = 2 if remaining else 0
-            if index_tok + sep + remaining_tok <= self.max_window_tokens:
-                break
-            if idx == paged_indices[-1]:
+            if remaining_tokens <= available:
+                remove_count = candidate
                 break
 
-        if not removed:
-            return self._cache_render(signature, full_prompt, 0, 0)
+        removed = set(paged_indices[:remove_count])
+        prompt = self._prompt_with_index(
+            blocks, ordered, paged_indices, removed
+        )
+        # Exact correction: boundaries can merge tokens, and the real index
+        # may be larger than expected in pathological key sets.
+        while (
+            count_tokens(prompt) > self.max_window_tokens
+            and remove_count < len(paged_indices)
+        ):
+            remove_count += 1
+            removed = set(paged_indices[:remove_count])
+            prompt = self._prompt_with_index(
+                blocks, ordered, paged_indices, removed
+            )
 
+        # The reservation usually over-folds by a block or so; reveal newer
+        # cold blocks again while the exact prompt still fits.
+        while remove_count > 1:
+            trial_removed = set(paged_indices[: remove_count - 1])
+            trial = self._prompt_with_index(
+                blocks, ordered, paged_indices, trial_removed
+            )
+            if count_tokens(trial) > self.max_window_tokens:
+                break
+            remove_count -= 1
+            removed = trial_removed
+            prompt = trial
+
+        index_block, index_tok = self._index_block_for(
+            ordered, paged_indices, removed
+        )
+        return self._cache_render(signature, prompt, remove_count, index_tok)
+
+    def _index_block_for(
+        self,
+        ordered: list[KeyEntry],
+        paged_indices: list[int],
+        removed: set[int],
+    ) -> tuple[str, int]:
         omitted_keys = [
             ordered[i].key for i in reversed(paged_indices) if i in removed
         ]
@@ -470,15 +513,22 @@ class NodeAState:
         index_block = self._build_index_block(
             len(removed), omitted_keys, omitted_tokens
         )
-        index_tok = count_tokens(index_block)
+        return index_block, count_tokens(index_block)
+
+    def _prompt_with_index(
+        self,
+        blocks: list[str],
+        ordered: list[KeyEntry],
+        paged_indices: list[int],
+        removed: set[int],
+    ) -> str:
+        if not removed:
+            return "\n\n".join(blocks)
+        index_block, _ = self._index_block_for(ordered, paged_indices, removed)
         remaining = "\n\n".join(
-            b for i, b in enumerate(blocks) if i not in removed
+            block for i, block in enumerate(blocks) if i not in removed
         )
-        if remaining:
-            prompt = index_block + "\n\n" + remaining
-        else:
-            prompt = index_block
-        return self._cache_render(signature, prompt, len(removed), index_tok)
+        return f"{index_block}\n\n{remaining}" if remaining else index_block
 
     def _cache_render(
         self,
@@ -572,7 +622,10 @@ class NodeAState:
         # The rendered prompt, not the uncapped raw block list, is the budget.
         # Once cold stubs are folded into archive_index, the rendered view can
         # already fit; evicting more would just raise the page-fault rate.
-        while self.window_tokens() > self.max_window_tokens:
+        while True:
+            window = self.window_tokens()
+            if window <= self.max_window_tokens:
+                break
             candidates = [
                 entry
                 for entry in self.entries.values()
@@ -584,10 +637,19 @@ class NodeAState:
             ]
             if not candidates:
                 break
-            victim = min(candidates, key=lambda entry: entry.eviction_key)
-            victim.full_text = None
-            victim.residence = PAGED_TO_NODE_B
-            logger.info("paged out %s v%s", victim.key, victim.version)
+            # Evict a batch whose full blocks cover the excess.  Savings are
+            # optimistic (folding into archive_index costs almost nothing), so
+            # the exact render above runs once more and corrects the tail
+            # instead of re-tokenizing the window after every single eviction.
+            excess = window - self.max_window_tokens
+            saved = 0
+            for victim in sorted(candidates, key=lambda entry: entry.eviction_key):
+                saved += count_tokens(self._block_text(victim))
+                victim.full_text = None
+                victim.residence = PAGED_TO_NODE_B
+                logger.info("paged out %s v%s", victim.key, victim.version)
+                if saved >= excess:
+                    break
 
         while self.spill_dirty and self.window_tokens() > self.max_window_tokens:
             spill_candidates: list[tuple[KeyEntry, str]] = []

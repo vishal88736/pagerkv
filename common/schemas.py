@@ -59,6 +59,8 @@ class FaultResponse(BaseModel):
 class NodeBHealth(BaseModel):
     ok: bool
     node: Literal["B"]
+    fault_mode: FaultMode = "none"
+    ready: bool = True
 
 
 # ---------------------------------------------------------------------------

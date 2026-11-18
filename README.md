@@ -4,7 +4,8 @@ PagerKV gives an LLM agent a small, hard-bounded context window without losing
 anything it has observed. **Node A** is the agent's RAM: it holds the blocks
 currently in the prompt and keeps their total (including headers) at or below
 `MAX_WINDOW_TOKENS` (2000 by default). **Node B** is the disk: a lossless
-SQLite archive holding every version of every block plus a short stub for each.
+SQLite archive holding the current version of every block plus a short stub for
+each, and a tombstone watermark for every deleted key.
 Node A may drop a block's full text only after Node B has acknowledged that
 *exact* version. If Node B is down, slow, or errors, the block is dirty: Node A
 keeps its full text in its own fsync'd state file and, if the window is full,
@@ -37,7 +38,8 @@ A live dashboard is served at **http://127.0.0.1:8001/ui** (see [Dashboard](#das
                  |  Node B (L2, disk) :8002 |  <---------------------------------------------+
                  |                         |
                  |  SQLite archive         |
-                 |  full text per version  |
+                 |  current full text      |
+                 |  delete tombstones      |
                  |  deterministic stub     |
                  +-------------------------+
 
@@ -75,7 +77,14 @@ version as synced.
 If Node B answers "stale write" because it already holds a newer version
 (Node A lost its state file, or a delete is still pending there), Node A
 reconciles: it moves the key to Node B's version + 1 and retries, so the newest
-write wins instead of staying dirty forever.
+write wins instead of staying dirty forever. Two different payloads claiming
+the *same* version are a conflict, not an overwrite: Node B keeps the version it
+already acked and answers stale, and Node A retries as v+1. An identical
+same-version retry is idempotent and succeeds without rewriting the row.
+
+Deletes are versioned too. Node B keeps a tombstone (`deleted_through`) even
+after the row is gone, so a delayed replication for that version or older is
+rejected instead of resurrecting the key. A genuinely newer write is accepted.
 ```
 
 Residence (per key):
@@ -96,8 +105,12 @@ Residence (per key):
 Compaction runs two passes, each choosing the lowest `priority` first and then
 the least recently used key, and never touching pinned keys: first it pages out
 blocks Node B has acked; then, only if still over budget, it spills dirty blocks.
+Both passes compare the **rendered prompt** against the budget and only move a
+block when its stub is smaller than its full text, so a tiny block is never
+"evicted" into something longer. Cold stubs that already fit inside
+`archive_index` do not force more eviction.
 
-## The six invariants
+## The seven invariants
 
 1. A key is paged out to Node B (its full text dropped from Node A) **only** if
    `acked_version == version` and its status is `SYNCED_ARCHIVED`.
@@ -113,6 +126,8 @@ blocks Node B has acked; then, only if still over budget, it spills dirty blocks
 6. Every key in Node A is discoverable: it appears in the rendered prompt as full
    text or stub, or it is named in `archive_index`, or
    `GET /context/search` with its key name returns it.
+7. A settled delete is never undone by an in-flight or delayed replication:
+   Node B keeps a tombstone watermark and rejects writes at or below it.
 
 ## Prompt budget and headers
 
@@ -203,7 +218,7 @@ pip install -r requirements-dev.txt     # runtime deps are in requirements.txt
 # Start both nodes (Node B on 8002, Node A on 8001), then open http://127.0.0.1:8001/ui
 bash scripts/run_nodes.sh
 
-# Tests (they launch their own isolated subprocesses on 8001/8002)
+# Tests (each integration test launches an isolated pair on ephemeral ports)
 pytest -q
 
 # Lint and type check (what CI runs)
@@ -293,15 +308,21 @@ curl -s -X POST http://127.0.0.1:8002/admin/fault \
 curl -s 'http://127.0.0.1:8002/search?q=deploy+token&limit=5'
 
 # Delete only if the archived version is <= 3 (safe to retry; never removes v4)
+# A tombstone is kept, so a late replication at v3 or older cannot resurrect it.
 curl -s -X DELETE 'http://127.0.0.1:8002/archive/db_schema?version=3'
 
-# Prometheus metrics: archived keys/tokens, fault mode
+# Readiness: 503 while fault mode is "down"; /health stays 200 for the switch
+curl -s http://127.0.0.1:8002/ready
+
+# Prometheus metrics: archived keys/tokens, tombstones, fault mode
 curl -s http://127.0.0.1:8002/metrics
 ```
 
-With `mode=down`, `/replicate`, `/search` and `/archive/{key}` return 503;
-`/health`, `/metrics` and `/admin/fault` stay available. With `mode=slow`, data endpoints sleep
-`delay_s` seconds before running.
+With `mode=down`, `/replicate`, `/search`, `/ready` and `/archive/{key}` return
+503; `/health`, `/metrics` and `/admin/fault` stay available so the fault can be
+switched back off. With `mode=slow`, data endpoints sleep `delay_s` seconds before
+running. `/health` reports `fault_mode` and `ready`, and Node A exposes the same
+data-plane signal as `node_b_ready`.
 
 ### Node A
 
@@ -330,8 +351,18 @@ curl -s -X DELETE http://127.0.0.1:8001/context/db_schema
 # Whole-window status (include_text=false omits each key's text)
 curl -s 'http://127.0.0.1:8001/context/status?include_text=false'
 
+# One aggregate answer to "is the key-value store consistent?"
+curl -s http://127.0.0.1:8001/replication/status
+
+# Plain value API: GET hydrates when the key is paged or spilled
+curl -s -X PUT http://127.0.0.1:8001/kv/db_schema \
+  -H 'content-type: application/json' \
+  -d '{"value":"Postgres schema with users, orders, payments."}'
+curl -s http://127.0.0.1:8001/kv/db_schema
+curl -s -X DELETE http://127.0.0.1:8001/kv/db_schema
+
 # Prometheus metrics: window tokens, budget, page faults, resident/paged/
-# spilled/dirty key counts, pending deletes
+# spilled/dirty key counts, pending deletes, replication attempts
 curl -s http://127.0.0.1:8001/metrics
 
 # What the agent would put in its prompt, in created_at order
@@ -340,6 +371,7 @@ curl -s http://127.0.0.1:8001/context/prompt
 # Search Node A (merges Node B results with local key-name matches)
 curl -s 'http://127.0.0.1:8001/context/search?q=obs_17&limit=5'
 
+# Node A health includes node_b_reachable and node_b_ready
 curl -s http://127.0.0.1:8001/health
 ```
 
@@ -349,11 +381,25 @@ registered first, so those three exact names are reserved: `PUT` with one of the
 returns 422 instead of storing a key that could never be read back. Names that
 only start with them (`status-report`, `search/history`) are ordinary keys.
 
+Inputs are bounded on both nodes: keys are 1-512 characters with no control
+characters (so a key cannot inject prompt structure), and text/value is at most
+1,000,000 characters. Search `limit` is 1-50. Violations are a 422.
+
+`/kv/{key}` is a plain value facade for callers that do not care about prompt
+stubs: `PUT` accepts `{"value": ...}`, `GET` returns the exact value (hydrating
+from the spill or Node B when needed, with `source` naming the path), and
+`DELETE` returns 204. It reports the version and whether it was replicated.
+`GET /replication/status` aggregates keys by consistency and residence,
+replication attempt/success/failure counts, the last error, pending deletes and
+Node B's reachability/readiness into one `consistent` or `degraded` answer.
+
 `DELETE` removes the key from Node A at once and records a tombstone (persisted)
 for the deleted version. Node A then calls Node B's versioned delete; if Node B is
 unreachable, the retry loop keeps trying until Node B confirms. A key re-created
 before that happens continues numbering after the deleted version, so the
-pending delete can never remove the new copy.
+pending delete can never remove the new copy. Node B also keeps the tombstone
+after the row is gone, so a replication that was already in flight when the
+delete settled is rejected rather than resurrecting the key.
 
 Hydration answers with `source`: `L1` (already resident), `L1_SPILL` (restored
 from the local spill) or `L2_PAGE_FAULT` (fetched from Node B). Failures are
@@ -365,19 +411,24 @@ explicit:
 
 ## Tests
 
-`pytest -q` currently reports **37 passed**. The suite starts real Node B and
-Node A subprocesses on 8001/8002 with a temporary database and state file,
-resets fault injection before each test, uses unique keys, and runs entirely
-offline. Some tests drive `NodeAState` directly with fake replicators to force
-exact orderings.
+`pytest -q` currently reports **49 passed**. Integration tests start a fresh
+Node B and Node A subprocess pair on ephemeral ports with their own temporary
+database and state file, so keys, faults and token budgets cannot leak between
+tests. Unit tests that drive `NodeAState` directly use fake replicators and
+start no servers at all. Everything runs offline.
 
 Covered:
 
-- Node B: round-trip and sha256, stale-write rejection, short stubs, 503 down,
-  versioned delete.
+- Node B: round-trip and sha256, stale-write rejection, same-version idempotency,
+  same-version conflict rejection, short stubs, delete tombstones rejecting late
+  replication, `/ready` during fault injection, 503 down, versioned delete.
 - Node A: under-budget residency, LRU paging, exact hydration, prompt budget,
   literal `status` route, reserved names, keys with slashes, version bump,
   key-range compression, discoverability of all 120 keys, peek reads.
+- State/compaction: rendered-prompt budget keeps hot keys resident instead of
+  paging everything, `full_tokens_on_node_b` reports the acked version (not a
+  dirty newer one), stubs longer than their text are never used, consistency and
+  replication counters.
 - Faults: dirty keys spill but are never paged and hydrate byte-for-byte while
   Node B is down, spill disabled keeps the old over-budget rule, recovery after
   Node B returns, slow Node B returns within the timeout, stale/out-of-order acks
@@ -385,7 +436,9 @@ Covered:
   eviction, hydrate 503 with stub while down, Node A restart preserves state.
 - Ops: admin guard (loopback and token), `/metrics` on both nodes, slim status,
   delete reaching Node B, identifier-keeping stubs, local search while Node B is
-  down, dashboard route and fault proxy.
+  down, `/kv` PUT/GET/DELETE round trip including hydration, aggregate
+  `/replication/status` in healthy and degraded modes, input limits, bounded
+  search limits, dashboard route and fault proxy.
 
 ## Benchmark
 
@@ -396,31 +449,39 @@ prompt; it crashes when that prompt exceeds 2000 tokens. The PagerKV agent does
 counts, hydrates a paged older key every 10th turn, and runs a whole-outage
 window: Node B is set `down` at turn 40 and `none` at turn 50. At the end it
 hydrates **every** key and compares sha256 with the original. Every observation
-also embeds a unique `Fact obs_N: deploy token is XXXX.` line, and every 10th
+also embeds a unique `Fact obs_N: deploy token is xxxxxx.` line, and every 10th
 turn (plus 20 random keys at the end) the simulated agent tries to recover that
 fact using only the prompt, `/context/search`, and hydration. Recall succeeds
-when the hydrated full text contains the stored code.
+when the hydrated full text contains the stored code. The code is lowercase and
+non-identifier-shaped on purpose: uppercase codes, digits and underscores are
+copied into stubs as `key terms`, which would make recall pass without hydrating
+anything. Page faults are captured after the 100-turn workload but before the
+final 100 correctness hydrations, so the number measures agent and recall
+behaviour rather than the benchmark's own verification.
 
 Latest run:
 
 ```
-Baseline crashed at turn 5 | PagerKV ran 100 turns | max prompt tokens 2000 | lossless 100/100 | page faults 132
-recall 30/30 (outside-fault 28/28)
-Max prompt tokens outside the fault window: 2000
+Baseline crashed at turn 3 | PagerKV ran 100 turns | max prompt tokens 1999 | lossless 100/100 | page faults 17
+recall 29/30 (outside-fault 28/28)
+Max prompt tokens outside the fault window: 1999
 Benchmark check passed.
 ```
 
-- Baseline crash: turn 5 (requirement: before turn 15).
+- Baseline crash: turn 3 (requirement: before turn 15).
 - PagerKV completed all 100 turns, and the prompt never exceeded the 2000-token
   cap, **including the outage** (previously 5567 there).
 - Lossless: 100/100 full texts recovered by hydration.
-- Recall: 30/30, including the check inside the outage window. Outside it,
-  28/28.
+- Recall: 28/28 outside the outage, which is the CI gate. The single in-fault
+  miss is expected: Node B is down, so a fact that is neither resident nor
+  spilled cannot be hydrated until recovery.
 - During turns 40-49 up to 10 dirty blocks are spilled to Node A's disk instead
   of staying in the prompt; at turn 50 the retry loop syncs them and they become
   ordinary paged blocks.
 - The page-fault count can vary by a few between runs: it depends on how quickly
-  the background retry loop syncs keys after the outage.
+  the background retry loop syncs keys after the outage and on which recall keys
+  were already resident. It counts only hydrations performed by the workload and
+  recall checks, not the final verification pass.
 
 ![PagerKV benchmark](bench/benchmark.png)
 
@@ -445,6 +506,7 @@ pagerkv/
   common/
     tokens.py          # the only token counter
     schemas.py         # shared pydantic models
+    validation.py      # key/text limits shared by both nodes
     summarizer.py      # deterministic stubs (first sentence + key terms)
     admin.py           # admin-endpoint guard (loopback or token)
     metrics.py         # Prometheus text rendering
@@ -454,7 +516,7 @@ pagerkv/
     replicator.py      # shared httpx client + dirty-key retry loop
     app.py             # FastAPI routes for L1
   node_b/
-    archive.py         # SQLite archive, stale-write guard, versioned delete
+    archive.py         # SQLite archive, stale-write/conflict guards, tombstones
     summarizer.py      # re-exports common.summarizer
     app.py             # FastAPI routes + fault injection for L2
   ui/
@@ -470,6 +532,7 @@ pagerkv/
     conftest.py
     test_node_b.py
     test_node_a.py
+    test_state.py
     test_fault_tolerance.py
     test_ops.py
     test_ui.py
@@ -512,7 +575,10 @@ older text.
   `/metrics` use the slim form). It is an observability endpoint, not the hot path.
 - **Reconciliation is last-writer-wins.** If Node A loses its state file, its
   next write to a key that Node B already holds supersedes Node B's copy
-  (versions jump past it). Pending deletes are tracked in the same file, so
-  losing it can leave deleted keys on Node B.
+  (versions jump past it). Two writes claiming the same version are detected as
+  a conflict and retried as v+1 rather than overwriting silently. Pending
+  deletes are tracked in the same state file, so losing it can leave deleted
+  keys on Node B. Node B's tombstones are retained (they are tiny) and are not
+  garbage-collected.
 - **Polling dashboard.** The UI polls; it does not stream updates. That is fine
   for hundreds of keys, but a large deployment would want server-sent events.
