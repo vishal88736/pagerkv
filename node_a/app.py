@@ -250,25 +250,22 @@ async def prometheus_metrics(request: Request) -> str:
 @app.get("/replication/status", response_model=ReplicationStatusResponse)
 async def replication_status(request: Request) -> dict:
     """One aggregate answer to "is the key-value store consistent?"."""
-    status = await _state(request).status(include_text=False)
-    rows = list(status["keys"].values())
     replicator = _replicator(request)
     reachable = await replicator.health()
     ready = await replicator.ready() if reachable else False
-    counts = {
-        "total": len(rows),
-        "synced": sum(1 for row in rows if row["consistency_status"] == "SYNCED_ARCHIVED"),
-        "dirty": sum(1 for row in rows if row["consistency_status"] == "DIRTY_UNREPLICATED"),
-        "pending": sum(1 for row in rows if row["consistency_status"] == "PENDING_REPLICATION"),
-        "resident": sum(1 for row in rows if row["residence"] == "RESIDENT_FULL"),
-        "paged": sum(1 for row in rows if row["residence"] == "PAGED_TO_NODE_B"),
-        "spilled": sum(1 for row in rows if row["residence"] == "SPILLED_LOCAL"),
-    }
-    consistent = (
-        ready and counts["dirty"] == 0 and counts["pending"] == 0 and status["pending_deletes"] == 0
-    )
     state = _state(request)
     async with state._lock:
+        status = state._status_unlocked(include_text=False)
+        rows = list(status["keys"].values())
+        counts = {
+            "total": len(rows),
+            "synced": sum(1 for row in rows if row["consistency_status"] == "SYNCED_ARCHIVED"),
+            "dirty": sum(1 for row in rows if row["consistency_status"] == "DIRTY_UNREPLICATED"),
+            "pending": sum(1 for row in rows if row["consistency_status"] == "PENDING_REPLICATION"),
+            "resident": sum(1 for row in rows if row["residence"] == "RESIDENT_FULL"),
+            "paged": sum(1 for row in rows if row["residence"] == "PAGED_TO_NODE_B"),
+            "spilled": sum(1 for row in rows if row["residence"] == "SPILLED_LOCAL"),
+        }
         remote = await replicator.snapshot()
         local = {
             key: {"value": state.full_values.get(key), "version": entry.version}
@@ -304,7 +301,7 @@ async def replication_status(request: Request) -> dict:
         "last_replication": status["last_replication"],
         "comparison_status": comparison,
         "differing_keys": differing,
-        "local_value_count": len(state.full_values),
+        "local_value_count": status["local_value_count"],
         "node": "A",
         "node_b_url": config.NODE_B_URL,
         "node_b_reachable": reachable,

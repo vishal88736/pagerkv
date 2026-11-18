@@ -988,56 +988,60 @@ class NodeAState:
 
     async def status(self, include_text: bool = True) -> dict[str, Any]:
         async with self._lock:
-            keys: dict[str, Any] = {}
-            dirty = 0
-            pending = 0
-            for entry in self.entries.values():
-                if entry.consistency_status == DIRTY_UNREPLICATED:
-                    dirty += 1
-                elif entry.consistency_status == PENDING_REPLICATION:
-                    pending += 1
-                prompt_view = None
-                if include_text:
-                    prompt_view = (
-                        entry.full_text if entry.residence == RESIDENT_FULL else (entry.stub or "")
-                    )
-                keys[entry.key] = {
-                    "version": entry.version,
-                    "residence": entry.residence,
-                    "consistency_status": entry.consistency_status,
-                    "active_tokens_in_node_a": entry.active_tokens,
-                    "full_tokens_on_node_b": (
-                        entry.acked_full_tokens if entry.acked_version > 0 else None
-                    ),
-                    "eviction_allowed": entry.eviction_allowed,
-                    "replication_error": entry.replication_error,
-                    "pinned": entry.pinned,
-                    "priority": entry.priority,
-                    "acked_version": entry.acked_version,
-                    "prompt_view": prompt_view,
-                }
-            prompt, omitted, index_tokens = self.render_prompt()
-            window = count_tokens(prompt)
-            consistent = dirty == 0 and pending == 0 and not self.tombstones
-            return {
-                "last_replication": self.last_replication,
-                "local_value_count": len(self.full_values),
-                "active_window_tokens": window,
-                "max_window_tokens": self.max_window_tokens,
-                "over_budget": window > self.max_window_tokens,
-                "tokens_saved_by_replication": self.tokens_saved_by_replication(),
-                "tokens_spilled_locally": self.tokens_spilled_locally(),
-                "page_faults": self.page_faults,
-                "pending_deletes": len(self.tombstones),
-                "omitted_from_prompt": omitted,
-                "index_tokens": index_tokens,
-                "consistency": "consistent" if consistent else "degraded",
-                "replication_attempts": self.replication_attempts,
-                "replication_successes": self.replication_successes,
-                "replication_failures": self.replication_failures,
-                "last_replication_error": self.last_replication_error,
-                "keys": keys,
+            return self._status_unlocked(include_text)
+
+    def _status_unlocked(self, include_text: bool = True) -> dict[str, Any]:
+        """Build one snapshot while the caller holds the state lock."""
+        keys: dict[str, Any] = {}
+        dirty = 0
+        pending = 0
+        for entry in self.entries.values():
+            if entry.consistency_status == DIRTY_UNREPLICATED:
+                dirty += 1
+            elif entry.consistency_status == PENDING_REPLICATION:
+                pending += 1
+            prompt_view = None
+            if include_text:
+                prompt_view = (
+                    entry.full_text if entry.residence == RESIDENT_FULL else (entry.stub or "")
+                )
+            keys[entry.key] = {
+                "version": entry.version,
+                "residence": entry.residence,
+                "consistency_status": entry.consistency_status,
+                "active_tokens_in_node_a": entry.active_tokens,
+                "full_tokens_on_node_b": (
+                    entry.acked_full_tokens if entry.acked_version > 0 else None
+                ),
+                "eviction_allowed": entry.eviction_allowed,
+                "replication_error": entry.replication_error,
+                "pinned": entry.pinned,
+                "priority": entry.priority,
+                "acked_version": entry.acked_version,
+                "prompt_view": prompt_view,
             }
+        prompt, omitted, index_tokens = self.render_prompt()
+        window = count_tokens(prompt)
+        consistent = dirty == 0 and pending == 0 and not self.tombstones
+        return {
+            "last_replication": self.last_replication,
+            "local_value_count": len(self.full_values),
+            "active_window_tokens": window,
+            "max_window_tokens": self.max_window_tokens,
+            "over_budget": window > self.max_window_tokens,
+            "tokens_saved_by_replication": self.tokens_saved_by_replication(),
+            "tokens_spilled_locally": self.tokens_spilled_locally(),
+            "page_faults": self.page_faults,
+            "pending_deletes": len(self.tombstones),
+            "omitted_from_prompt": omitted,
+            "index_tokens": index_tokens,
+            "consistency": "consistent" if consistent else "degraded",
+            "replication_attempts": self.replication_attempts,
+            "replication_successes": self.replication_successes,
+            "replication_failures": self.replication_failures,
+            "last_replication_error": self.last_replication_error,
+            "keys": keys,
+        }
 
     async def prompt(self) -> dict[str, Any]:
         async with self._lock:

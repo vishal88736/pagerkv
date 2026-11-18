@@ -21,11 +21,11 @@ jobs:
         run: ruff check .
       - name: Type check
         run: mypy
-      - name: Tests
-        run: pytest -q
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - name: Tests
+        run: pytest -q
       - name: Dashboard behavior
         run: node --test tests/dashboard.test.cjs
       - name: Context benchmark

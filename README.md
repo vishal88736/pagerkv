@@ -8,7 +8,9 @@ and builds the active prompt. Every write attempts HTTP replication to **Node B*
 which stores the full text and returns a short context stub. A block can leave
 the active prompt as full text only after its exact version is acknowledged.
 
-The dashboard shows this process as two isometric nodes: full blocks and stubs
+The dashboard shows the actual client request, measured replica HTTP results,
+matching key/version labels, and independent replication/context badges.
+It visualizes the process as two isometric nodes: full blocks and stubs
 on A, acknowledged full copies on B, copying from A → B, and hydration from B → A.
 
 **Concepts:** REST · HTTP verbs · replication · versioned acknowledgments · consistency · context management
@@ -25,6 +27,7 @@ below its 2,000-token budget while both nodes retain the complete values.*
 - [Replication and context paging](#replication-and-context-paging)
 - [Run locally](#run-locally)
 - [Use the dashboard](#use-the-dashboard)
+- [Guided assignment demo](#guided-assignment-demo)
 - [REST API](#rest-api)
 - [Failure and recovery](#failure-and-recovery)
 - [Consistency and safety](#consistency-and-safety)
@@ -186,9 +189,60 @@ Stop without removing the data using `docker compose down`.
   an agent would place in its prompt.
 - **Timeline / Benchmark replay:** inspect live token changes or replay the benchmark CSV.
 
+<details>
+<summary>View the narrow-screen dashboard screenshot</summary>
+
+<img src="docs/images/dashboard-mobile.png" width="360" alt="PagerKV on a narrow screen with guided steps, replication evidence, separate context badges, and compact context statistics">
+
+</details>
+
 The dashboard polls status every 1.5 seconds. Its animations illustrate observed
 requests and acknowledgments; they are not network packet captures. If A becomes
 unavailable, displayed status is explicitly marked stale.
+
+## Guided assignment demo
+
+Click **Start guided demo** near the top of the dashboard, then advance one step
+at a time. It runs the real REST API against the two services:
+
+| Step | What happens | Evidence on screen |
+| --- | --- | --- |
+| 1. PUT & copy | Create a small, pinned sample observation through `PUT /key` | Actual request body, local acceptance, B's HTTP response and duration, matching full values and versions |
+| 2. Fail B & update | Set B down and update the same sample key | A returns 200 for its local write; B returns 503; the copy is pending and consistency is unknown |
+| 3. Read from A | GET the full updated value while B is unavailable | Complete local value and `LOCAL_STORE` source |
+| 4. Recover copy | Bring B online and wait for background retry | Matching current values/versions without sending another PUT |
+| 5. Page & hydrate | Unpin the sample and add acknowledged context until a block pages out | Replication stays in sync while the context badge changes to paged stub |
+
+The final step **pauses at the stub**. Inspect the full values on both nodes,
+then click **Hydrate sample B → A** to retrieve the exact text and complete the
+demo. This makes the difference between copying, paging, and hydration visible.
+
+The demo creates unique `demo_...` keys and does not overwrite existing values.
+Its failure step affects B globally until recovery or reset. **Reset & remove
+sample keys** restores B if the demo took it down, then deletes only the keys
+created by that page's demo. If you reload during a failure step, use B's Online
+control to restore it; sample keys remain identifiable by their prefix.
+
+### Read the evidence panels
+
+- **Client request → Node A:** the actual HTTP method, route, request body, response
+  code, and client round-trip duration. Long bodies are explicitly marked as previews.
+- **Last measured replication result → Node B:** the actual key/version, `POST
+  /replicate` HTTP status, measured duration, trigger (client write or background
+  retry), and acknowledgment validation or failure reason. This is the latest
+  global write-replication result, which may come from another key or client.
+- **Paired copies:** select a block or key to compare the current full values and
+  versions on A and B without hydrating the context. The latest recorded write is
+  selected automatically on initial load.
+- **Separate badges:** `Replication: in sync` and `Context: paged stub` can both be
+  correct. During an outage, `Replication: unknown · 1 pending update` describes
+  two different facts. An unavailable B never gets an invented current value.
+
+A Node A HTTP 200 proves local acceptance, not successful replication. B can
+return HTTP 200 yet fail acknowledgment validation; that is recorded as a failed
+copy. Timeouts and connection failures show **No HTTP response**, not a fabricated
+HTTP code. Durations are measured around the A-to-B HTTP attempt and include
+response parsing/validation. The last result survives an A restart.
 
 ## REST API
 
@@ -201,7 +255,8 @@ unavailable, displayed status is explicitly marked stale.
 | `GET` | `/key/{key}` | Return the complete local value without hydrating the context |
 | `DELETE` | `/key/{key}` | Remove the value and context entry; replicate a versioned deletion |
 | `GET` | `/keys` | List keys, versions, complete local values, and local availability |
-| `GET` | `/replication/status` | Return counters, per-state counts, and a live comparison result |
+| `GET` | `/replication/status` | Return counters, per-state counts, last measured replication result, and a live comparison |
+| `GET` | `/replication/key/{key}` | Read-only comparison of one key’s full values, versions, and context residence |
 
 Example:
 
@@ -395,8 +450,14 @@ state. They cover context budgeting, safe paging, exact hydration, replication
 failures and recovery, stale acknowledgments, deletion watermarks, local full-value
 reads during outages, restart/legacy recovery, and checkpoint failures.
 
+With Node.js available, a backend integration test also executes the actual
+guided-demo JavaScript against isolated real services, verifying background retry,
+the paging pause, exact hydration, and cleanup while preserving an existing key.
+CI installs Node.js before running that test; it is skipped locally if Node is absent.
+
 Dashboard checks use a simulated DOM for node-copy rendering, HTML escaping,
-copy/hydration direction, reduced motion, recovery feedback, and full local reads.
+copy/hydration direction, independent badges, measured result display, failure
+handling, recovery feedback, and full local reads.
 The README screenshots are actual Chromium captures of the running services.
 
 ### Reproducible context benchmark

@@ -226,6 +226,17 @@ svg.chart{display:block; width:100%; height:220px}
 .pair-head{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;align-items:center;margin-top:18px}.pair-head strong{font-family:var(--mono);color:var(--c1);overflow-wrap:anywhere}.pair-badge{padding:3px 8px;border:1px solid var(--line2);border-radius:4px}.pair-context{color:var(--spill)}.pair-title{font-family:var(--mono);font-size:12px;overflow-wrap:anywhere}.pair-value{font-family:var(--mono);font-size:11px;color:var(--muted);white-space:pre-wrap;overflow-wrap:anywhere;max-height:90px;overflow:auto;margin:8px 0 0}.copy-pair[hidden]{display:none}.block-label{font-family:var(--mono);font-size:10px;fill:#edf7ff;paint-order:stroke;stroke:#080e14;stroke-width:3px;pointer-events:none}
 @media(max-width:760px){.evidence-grid,.pair-grid{grid-template-columns:1fr}.demo-panel{margin:16px 16px 0;padding:16px}.app-intro{margin:16px 16px 0}.result-meta{gap:7px}.demo-actions .btn{white-space:normal}}
 
+
+@media(max-width:640px){
+  .top{position:static;gap:8px}.brand{flex-basis:100%;font-size:18px;margin-right:0}
+  .pill{font-size:11px;padding:7px 10px;gap:6px;max-width:100%}.live{font-size:10px}
+  .stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+  .stats .card{padding:14px 12px}.card h3{font-size:12px;gap:7px}.card h3 svg{width:16px;height:16px}
+  .big{font-size:28px;margin:12px 0 0}.big small{font-size:12px}.chip{font-size:11px;margin:8px 0 0;max-width:100%}
+  .transfer-track{flex-wrap:nowrap;gap:8px}.transfer-node{flex:1;min-width:0;padding:10px 8px;font-size:11px}
+  .transfer-wire{flex:0 0 48px;min-width:48px}.node-role{font-size:10px;line-height:1.5;max-width:none}
+}
+
 </style>
 </head>
 <body>
@@ -446,7 +457,7 @@ svg.chart{display:block; width:100%; height:220px}
     return { ok: r.ok, status: r.status, body };
   }
 
-  let requestSequence = 0, currentRequest = null, selectedCopy = null, pairBusy = false;
+  let requestSequence = 0, currentRequest = null, selectedCopy = null, pairTask = null;
   let demo = null, demoBusy = false;
   const demoSteps = ["PUT & copy", "Fail B & update", "Read from A", "Recover copy", "Page & hydrate"];
   const shortValue = value => {
@@ -533,14 +544,17 @@ svg.chart{display:block; width:100%; height:220px}
     } else if (currentRequest?.result?.ok) {
       const entry = status?.keys?.[currentRequest.key];
       if (entry) setPhases(true, entry.acked_version === entry.version, entry.consistency_status === "DIRTY_UNREPLICATED", contextLabel(entry.residence));
+    } else if (!currentRequest && result && status?.keys?.[result.key]) {
+      const entry = status.keys[result.key];
+      setPhases(true, entry.acked_version === entry.version, entry.consistency_status === "DIRTY_UNREPLICATED", contextLabel(entry.residence));
     }
   }
 
-  async function loadCopyPair() {
-    if (!selected || pairBusy) return;
+  function loadCopyPair(fresh = false) {
+    if (!selected) return Promise.resolve();
+    if (pairTask) return fresh ? pairTask.then(() => loadCopyPair()) : pairTask;
     const key = selected;
-    pairBusy = true;
-    try {
+    pairTask = (async () => {
       const result = await api(`/replication/key/${enc(key)}`);
       if (selected !== key) return;
       $("copyPair").hidden = false;
@@ -557,10 +571,11 @@ svg.chart{display:block; width:100%; height:220px}
       selectedCopy = result.body;
       renderCopyPair(result.body);
       if (status) render();
-    } finally {
-      pairBusy = false;
+    })().finally(() => {
+      pairTask = null;
       if (selected && selected !== key) loadCopyPair();
-    }
+    });
+    return pairTask;
   }
 
   function renderCopyPair(pair) {
@@ -673,7 +688,7 @@ svg.chart{display:block; width:100%; height:220px}
         demo.pagedKey = paged; demo.pagedValue = local.value; demo.pageReady = true;
         transfer("idle", `${paged} — context is now a stub; the complete value still exists on both nodes. Paging did not move or delete the stored value.`);
         $("demoProof").textContent = "Step 5, paging verified: the acknowledged block is now a short context stub, while both complete values remain readable. Inspect the separate Replication and Context badges, then click Hydrate sample B → A.";
-        await poll(); loadPrompt(); await loadCopyPair();
+        await poll(true); loadPrompt(); await loadCopyPair(true);
         return;
       } else {
         selected = demo.pagedKey;
@@ -683,7 +698,7 @@ svg.chart{display:block; width:100%; height:220px}
         $("demoProof").textContent = "Step 5 verified: an acknowledged full value became a context stub, stayed readable locally, and hydrated exactly from B. Replication copies data; paging changes the active prompt. Sample keys remain until reset.";
       }
       demo.step++;
-      await poll(); loadPrompt(); await loadCopyPair();
+      await poll(true); loadPrompt(); await loadCopyPair(true);
     } catch (error) {
       $("demoProof").textContent = error.message;
       logEvent("bad", esc("Guided demo: " + error.message));
@@ -702,7 +717,7 @@ svg.chart{display:block; width:100%; height:220px}
       if (selected?.startsWith(demo.prefix + "_")) { selected = null; selectedCopy = null; $("copyPair").hidden = true; }
       demo = null;
       $("demoProof").textContent = "Demo reset. B was restored if this demo took it down, and only the generated sample keys were removed.";
-      await poll(); loadPrompt();
+      await poll(true); loadPrompt();
     } catch (error) { $("demoProof").textContent = error.message + ". Reset can be retried."; }
     finally { demoBusy = false; renderDemo(); }
   }
@@ -711,7 +726,14 @@ svg.chart{display:block; width:100%; height:220px}
   renderDemo();
 
   // ------------------------------------------------------------ polling
-  async function poll() {
+  let pollTask = null;
+  function poll(fresh = false) {
+    if (pollTask) return fresh ? pollTask.then(() => poll()) : pollTask;
+    pollTask = performPoll().finally(() => { pollTask = null; });
+    return pollTask;
+  }
+
+  async function performPoll() {
     if (busy) return;
     busy = true;
     try {
@@ -721,7 +743,7 @@ svg.chart{display:block; width:100%; height:220px}
       if (!h.ok || !s.ok || !s.body?.keys) throw new Error("Node A status unavailable");
       const comparison = c.ok ? c.body.comparison_status : "unknown";
       const names = { in_sync: "in sync", pending: "pending", diverged: "diverged", unknown: "unknown" };
-      const pendingCount = (s.body.keys ? Object.values(s.body.keys).filter(k => k.acked_version !== k.version).length : 0) + (s.body.pending_deletes || 0);
+      const pendingCount = c.ok ? c.body.keys.dirty + c.body.keys.pending + c.body.pending_deletes : (Object.values(s.body.keys).filter(k => k.acked_version !== k.version).length + (s.body.pending_deletes || 0));
       $("comparisonChip").textContent = (names[comparison] || "unknown") + (pendingCount ? ` · ${pendingCount} pending` : "");
       $("comparisonChip").style.color = comparison === "in_sync" ? "var(--ok)" : comparison === "pending" ? "var(--warn)" : "var(--bad)";
       $("backingCount").textContent = `${s.body.local_value_count || 0} full values retained locally.`;
@@ -743,6 +765,7 @@ svg.chart{display:block; width:100%; height:220px}
         if (status) diffEvents(status, s.body);
         observeReplication(status, s.body);
         status = s.body;
+        if (!selected && status.last_replication && status.keys[status.last_replication.key]) selected = status.last_replication.key;
         sample(status);
         render();
         renderReplicationResult(s.body.last_replication);
