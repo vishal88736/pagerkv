@@ -2,7 +2,10 @@ FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    TIKTOKEN_CACHE_DIR=/opt/tiktoken
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    TIKTOKEN_CACHE_DIR=/opt/tiktoken \
+    NODE_A_STATE_FILE=/data/node_a_state.json \
+    NODE_B_DB=/data/node_b_archive.db
 
 WORKDIR /app
 COPY requirements.txt .

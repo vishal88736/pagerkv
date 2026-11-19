@@ -6,7 +6,7 @@ The script has no timestamps.
 
 ## 1. Explain the problem statement
 
-*Show the README's problem-statement alignment table.*
+*Show the technical guide's problem-statement alignment table.*
 
 > The assignment asks us to build a REST-based mini distributed key-value store. Node A must store key-value pairs, a second Node B must receive a copy on every PUT, and the system must track replication success, failure, and consistency. PagerKV implements these requirements with two real HTTP services. It then applies the store to agent context management, making replication and its consequences visible.
 

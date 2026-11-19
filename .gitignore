@@ -12,3 +12,7 @@ node_a_state.json.tmp
 .mypy_cache/
 .ruff_cache/
 bench/_run/
+
+# Generated benchmark chart
+bench/benchmark.png
+/dist/

@@ -1,32 +1,33 @@
-# docker compose up --build   ->  dashboard at http://127.0.0.1:8001/ui
-#
-# Ports are published on 127.0.0.1 only. Inside Docker, browser requests do not
-# come from loopback, so the dashboard's Node B fault switch needs a token:
-#   PAGERKV_ADMIN_TOKEN=some-long-secret docker compose up --build
-# and enter the same token when the dashboard asks for it.
+# PAGERKV_ADMIN_TOKEN=pagerkv-local-demo docker compose up --build
+# Dashboard: http://127.0.0.1:8001/ui
+x-pagerkv-image: &pagerkv-image
+  image: pagerkv:local
+
 services:
   node-b:
-    build: .
+    <<: *pagerkv-image
+    build:
+      context: .
+    pull_policy: build
     command: ["uvicorn", "node_b.app:app", "--host", "0.0.0.0", "--port", "8002"]
     environment:
-      NODE_B_DB: /data/node_b_archive.db
       PAGERKV_ADMIN_TOKEN: ${PAGERKV_ADMIN_TOKEN:-}
     volumes:
       - node_b_data:/data
     ports:
       - "127.0.0.1:8002:8002"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/health')"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/health', timeout=1)"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
 
   node-a:
-    build: .
+    <<: *pagerkv-image
+    pull_policy: never
     command: ["uvicorn", "node_a.app:app", "--host", "0.0.0.0", "--port", "8001"]
     environment:
       NODE_B_URL: http://node-b:8002
-      NODE_A_STATE_FILE: /data/node_a_state.json
       MAX_WINDOW_TOKENS: ${MAX_WINDOW_TOKENS:-2000}
       SPILL_DIRTY: ${SPILL_DIRTY:-0}
       PAGERKV_ADMIN_TOKEN: ${PAGERKV_ADMIN_TOKEN:-}
@@ -37,6 +38,11 @@ services:
     depends_on:
       node-b:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/ui', timeout=1)"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
 
 volumes:
   node_a_data:

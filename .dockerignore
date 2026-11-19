@@ -1,4 +1,9 @@
 .git
+.github
+.agents
+.codex
+.aws
+.env*
 .venv
 venv
 **/__pycache__
@@ -8,4 +13,9 @@ venv
 *.db
 *.db-*
 node_a_state.json*
+bench/_run
+bench/benchmark.png
+docs
 tests
+dist
+*.zip
