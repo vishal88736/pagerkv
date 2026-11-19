@@ -255,6 +255,14 @@ async def replication_status(request: Request) -> dict:
     ready = await replicator.ready() if reachable else False
     state = _state(request)
     async with state._lock:
+        before = {
+            key: (entry.version, entry.acked_version) for key, entry in state.entries.items()
+        }
+        deletes_before = bool(state.tombstones)
+    # Sample the replica before locking local state so dashboard comparisons
+    # cannot stall local reads and writes during a replica timeout.
+    remote = await replicator.snapshot()
+    async with state._lock:
         status = state._status_unlocked(include_text=False)
         rows = list(status["keys"].values())
         counts = {
@@ -266,7 +274,6 @@ async def replication_status(request: Request) -> dict:
             "paged": sum(1 for row in rows if row["residence"] == "PAGED_TO_NODE_B"),
             "spilled": sum(1 for row in rows if row["residence"] == "SPILLED_LOCAL"),
         }
-        remote = await replicator.snapshot()
         local = {
             key: {"value": state.full_values.get(key), "version": entry.version}
             for key, entry in state.entries.items()
@@ -287,11 +294,18 @@ async def replication_status(request: Request) -> dict:
         pending_work = any(
             entry.acked_version != entry.version for entry in state.entries.values()
         ) or bool(state.tombstones)
+        changed_during_comparison = differing and (
+            deletes_before
+            or before
+            != {key: (entry.version, entry.acked_version) for key, entry in state.entries.items()}
+        )
         comparison = (
             "unknown"
             if remote is None or unavailable_local
             else "pending"
             if pending_work
+            else "unknown"
+            if changed_during_comparison
             else "diverged"
             if differing
             else "in_sync"
@@ -300,7 +314,7 @@ async def replication_status(request: Request) -> dict:
     return {
         "last_replication": status["last_replication"],
         "comparison_status": comparison,
-        "differing_keys": differing,
+        "differing_keys": [] if changed_during_comparison and comparison == "unknown" else differing,
         "local_value_count": status["local_value_count"],
         "node": "A",
         "node_b_url": config.NODE_B_URL,
@@ -328,6 +342,10 @@ async def inspect_replicated_key(key: str, request: Request) -> dict:
     state = _state(request)
     async with state._lock:
         entry = state.entries.get(key)
+        before = (entry.version, entry.acked_version) if entry is not None else None
+    fetched = await _replicator(request).fetch(key)
+    async with state._lock:
+        entry = state.entries.get(key)
         local = (
             None
             if entry is None
@@ -340,7 +358,6 @@ async def inspect_replicated_key(key: str, request: Request) -> dict:
                 "consistency_status": entry.consistency_status,
             }
         )
-        fetched = await _replicator(request).fetch(key)
         remote = (
             {"key": key, "version": fetched.version, "value": fetched.full_text}
             if fetched.ok
@@ -354,6 +371,7 @@ async def inspect_replicated_key(key: str, request: Request) -> dict:
             and local["value"] == remote["value"]
             and local["version"] == remote["version"]
         )
+        current = (entry.version, entry.acked_version) if entry is not None else None
         comparison = (
             "unknown"
             if unavailable or (local is not None and local["value"] is None)
@@ -361,6 +379,8 @@ async def inspect_replicated_key(key: str, request: Request) -> dict:
             if pending
             else "in_sync"
             if matches or (local is None and remote is None)
+            else "unknown"
+            if before != current
             else "diverged"
         )
         return {

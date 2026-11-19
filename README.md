@@ -292,15 +292,17 @@ have passed. Unverified replica deletion is reported explicitly.
 
 ## Guided demonstration & web dashboard
 
-Open the redesigned web console at [http://127.0.0.1:8001/ui](http://127.0.0.1:8001/ui) and click **Start guided demo**. Advance one step at a time:
+Open the [web dashboard](http://127.0.0.1:8001/ui). Use **Keys** to save and
+search values, inspect the active prompt block, and compare the copies on A and
+B. Open **Replication** and click **Start guided demo** to walk through these steps:
 
 | Step | Action | What it proves |
 | --- | --- | --- |
-| **1. PUT & copy** | Write a small, pinned sample observation through `PUT /key` | A saves the full value and B acknowledges a matching full replica |
-| **2. Fail B & update** | Take B down and update the same sample key | Local acceptance can succeed while replication fails |
-| **3. Read from A** | Read the complete updated value while B is unavailable | The primary value remains locally available |
-| **4. Recover copy** | Restore B and wait for background retry | The latest version converges without sending another PUT |
-| **5. Page & hydrate** | Unpin the sample and add acknowledged context | A full copy can remain replicated while its active-context representation becomes a stub |
+| **1. Save and copy** | Write a small, pinned sample observation through `PUT /key` | A saves the full value and B acknowledges a matching full replica |
+| **2. Simulate outage** | Take B down and update the same sample key | Local acceptance can succeed while replication fails |
+| **3. Read locally** | Read the complete updated value while B is unavailable | The primary value remains locally available |
+| **4. Recover replica** | Restore B and wait for background retry | The latest version converges without sending another PUT |
+| **5. Page and restore** | Unpin the sample and add acknowledged context | A full copy can remain replicated while its active-context representation becomes a stub |
 
 The final step pauses at the stub. Compare **Replication: in sync** with
 **Context: paged stub**, then click **Hydrate sample B → A** to restore the exact
@@ -308,9 +310,9 @@ text from the archive.
 
 The demo uses real HTTP requests and unique `demo_...` keys. It does not overwrite
 existing values. Taking B down affects all replication until recovery or reset.
-**Reset & remove sample keys** restores B if the demo took it down and removes
-only that page's generated keys. After a reload during an outage, restore B with
-its Online control; generated keys remain identifiable by their prefix.
+**Reset demo** restores B if the demo took it down and removes that page's
+generated keys. After a reload during an outage, select **Normal** in
+**Manual outage simulation**. Generated keys remain identifiable by their prefix.
 
 ### Read the dashboard evidence
 
@@ -319,8 +321,8 @@ its Online control; generated keys remain identifiable by their prefix.
 - **Replication result:** the latest global write-replication attempt's key,
   version, B HTTP status, measured duration, trigger, and validation/failure reason.
   It may describe a background retry or a write from another client.
-- **Paired copies:** the selected key's complete-value previews and actual versions
-  on A and B, alongside independent replication and context badges.
+- **Compare copies:** expand the selected key's comparison to see value previews
+  and actual versions on A and B. Use **Read full value** to show the complete value.
 - **Node view:** tall blocks show full context; short dashed blocks show stubs.
   B shows acknowledged full copies, including those still resident on A.
 - **Context statistics:** active tokens, budget, dirty keys, page faults, and
@@ -337,7 +339,7 @@ captures. If A cannot be checked, its last displayed snapshot is marked stale.
 
 ## Dashboard screenshots
 
-These are actual Chromium captures of the running website, using isolated
+These Chromium captures show the previous dashboard design using isolated
 services and sample observations written through the REST API.
 
 ### Both nodes online

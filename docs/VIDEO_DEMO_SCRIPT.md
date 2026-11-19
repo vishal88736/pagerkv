@@ -31,67 +31,67 @@ Open `http://127.0.0.1:8001/ui`.
 
 ## 4. Tour the dashboard
 
-*Show cluster indicators, the four KPI cards, Window Composition, and the two isometric nodes.*
+*Show the node status and metric cards in Overview. Open Diagnostics to show prompt composition and the node diagram.*
 
-> The header shows node availability, the active token budget, and live consistency. The cards show active prompt tokens, page faults, prompt tokens saved, and dirty keys. The composition panel and node diagram occupy separate areas. Tall blocks represent full active context; short dashed blocks represent stubs. B shows acknowledged full copies, including copies of blocks still resident on A.
+> Overview shows node availability and whether the copies match. The cards show prompt usage, context restores, prompt tokens saved, and pending copies. The composition panel and node diagram occupy separate areas. Tall blocks represent full active context; short dashed blocks represent stubs. B shows acknowledged full copies, including copies of blocks still resident on A.
 
 ## 5. Demonstrate PUT and full replication
 
-*Click Start guided demo. Show Client Request, Replication Result, paired values, and matching version labels.*
+*Open Replication and click Start guided demo. Expand HTTP request and response details, then open Compare copies under Selected key in Keys.*
 
 > The first step sends a real PUT /key with a complete sample observation. A saves it locally and then attempts POST /replicate to B. The initial attempt is awaited before A responds. Here the copy is acknowledged, and both nodes show matching values and versions. The result panel records B's actual HTTP response and duration. The acknowledgment checks the key, version, and SHA-256 content digest; that checks integrity, not authentication.
 
 ## 6. Demonstrate replica failure
 
-*Advance to Fail B & update. Show the new version, HTTP 503 result, dirty state, and unknown consistency with pending work.*
+*Advance to Simulate outage. Show the new version, HTTP 503 result, dirty state, and unknown consistency with pending work.*
 
 > This step makes B's data endpoints return HTTP 503 and updates the sample on A. A still accepts the value locally, but B has not acknowledged the new version. The copy is pending and the block is dirty. Consistency is unknown because B cannot be inspected. This demonstrates behavior during a simulated replica failure; it is not a physical network partition or a formal CAP classification.
 
 ## 7. Demonstrate a local read during the outage
 
-*Advance to Read from A. Show the GET route and complete returned text.*
+*Advance to Read locally. Show the GET route and complete returned text.*
 
 > A returns the complete updated value from LOCAL_STORE while B remains unavailable. Its stored value is independent of the active prompt and the replica. A successful local write or read does not imply that both nodes are currently synchronized.
 
 ## 8. Demonstrate background recovery
 
-*Advance to Recover copy. Wait for the actual comparison to match and show the background-retry trigger.*
+*Advance to Recover replica. Wait for the actual comparison to match and show the background-retry trigger.*
 
 > B is now online. The demo does not issue another PUT. The background retry loop sends the pending version, validates the acknowledgment, and restores the matching copy. The pending work clears for this key. Success and failure counters remain as a history of write-replication attempts, including retries.
 
 ## 9. Demonstrate paging separately from copying
 
-*Advance to Page & hydrate, but pause before clicking Hydrate sample. Show the stub, paired complete values, and independent badges.*
+*Advance to Page and restore, but pause before clicking Hydrate sample. Show the stub, paired complete values, and independent badges.*
 
 > The demo fills the active context until an acknowledged block becomes a stub. Replication is still in sync, while context residence is now paged. A's complete local value and B's original remain unchanged. This reduces prompt tokens, not storage size. The stub is a deterministic extractive summary and retrieval reference, not ZIP-style compression. Its summary portion has a 25-token budget; the complete stub also includes metadata. No LLM produces it.
 
 ## 10. Demonstrate hydration
 
-*Click Hydrate sample B → A. Show the reverse animation, full text, and Page Faults increase.*
+*Click Hydrate sample B → A. Show the reverse animation, full text, and the Context restores count increase.*
 
 > Hydration reads the archived text through GET /context/{key}?hydrate=true. The version must match before the text is restored. This step verifies an actual L2_PAGE_FAULT and exact original-text equality. Other eligible blocks can page out to make room. A resident or locally spilled block can be served without contacting B, so a hydration request is not always a network page fault.
 
 ## 11. Compare the two kinds of reads
 
-*Select a paged filler key in Context Keys Directory. Click View L1, then Read Local Value.*
+*Select a paged filler key in Stored keys. Click View prompt block, then Read full value.*
 
-> View L1 shows the current context representation, which can be a stub. Read Local Value returns the complete primary text without hydrating the prompt. Hydrate Context explicitly restores the context view. The directory separates current version, context residence, replication state, last acknowledged version, token counts, and policy. A last acknowledgment is historical; paired comparison checks the current replica.
+> View prompt block shows how the key appears in the current prompt. Read full value returns the complete text from Node A. Restore to prompt loads that text into the prompt. The table shows the current version, what appears in the prompt, and replication status. The Selected key panel shows the last confirmed version and policy. A last acknowledgment is historical; paired comparison checks the current replica.
 
 ## 12. Demonstrate pinning and priority
 
-*Select the small resident sample, toggle Pin, set priority to 20, inspect the policy, then unpin it.*
+*Select the small resident sample, open Pinning and priority, toggle Pin, set priority to 20, inspect the policy, then unpin it.*
 
 > Pinning keeps a block from being selected for active-context eviction. Among eligible unpinned blocks, lower priority is considered first, followed by least recently used access order. A replica-safety acknowledgment and a pinning policy are separate conditions. Pinned or dirty text can keep the prompt above budget; PagerKV reports this rather than silently truncating full text.
 
 ## 13. Demonstrate search and the rendered prompt
 
-*Search for billing, select a result, and show Rendered Agent Prompt.*
+*Search for billing, select a result, and show Current prompt in Diagnostics.*
 
 > Archive search uses SQLite FTS5 when available, with a fallback search implementation. A merges archive results with local key matches and can use local text when B is unavailable. The rendered prompt shows the actual context an agent could consume: headers, full observations, and stubs. With larger datasets, an archive index keeps cold keys discoverable when individual stubs would fill the budget. This is context infrastructure, not a running LLM agent.
 
 ## 14. Demonstrate manual create, update, and delete
 
-*Use a fresh key in Ingest Observation / Write Key. Save text, update the same key, select it, then click Delete and confirm. Inspect the missing key through API docs.*
+*Enter a fresh key in Save a key. Save text, update the same key, select it, then click Delete and confirm. Inspect the missing key through API docs.*
 
 > The ordinary workflow uses the same REST API as the guided tour. Creating a key saves and replicates a full value. Updating it advances the version. DELETE removes it locally and replicates a versioned deletion; local completion returns HTTP 204, and a later GET returns 404. If B is unavailable, the deletion remains pending for retry. The dashboard clears deleted copy details only after a successful local deletion.
 
@@ -107,7 +107,7 @@ Open `http://127.0.0.1:8001/ui`.
 
 ## 16. Demonstrate slow responses and timeouts
 
-*Choose Slow (3s), write another fresh sample, inspect the failure result, then restore Online and wait for recovery.*
+*Open Manual outage simulation and choose Slow (3 seconds). Write another fresh sample, inspect the failure, then select Normal and wait for recovery.*
 
 > The simulated delay exceeds the default two-second A-to-B timeout. A keeps its accepted value, while the result shows no HTTP response within the deadline. That does not prove B never stored it; the delayed request may finish later. Version checks make subsequent retries safe. Restoring normal operation lets the pending version be acknowledged.
 

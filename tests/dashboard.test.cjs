@@ -62,6 +62,9 @@ test('the full local value action uses the REST key API independently of hydrati
   context.fetch=async url=>{requested=url;return {ok:true,status:200,json:async()=>({value:'complete original'})};};
   await element('btnValue').onclick();
   assert.equal(requested,'/key/obs%2Fkey');assert.equal(element('detailOut').textContent,'complete original');
+  assert.equal(element('detailResult').hidden,false);
+  element('btnHideDetail').onclick();
+  assert.equal(element('detailResult').hidden,true);
 });
 
 
@@ -83,8 +86,8 @@ test('replication and context badges show independent facts for the same matchin
   check.renderCopyPair({key:'obs_01',node_a:{version:3,acked_version:3,value:'complete text',residence:'PAGED_TO_NODE_B'},node_b:{version:3,value:'complete text'},comparison_status:'in_sync',node_b_state:'available'});
   assert.equal(element('pairComparison').textContent,'Replication: in sync');
   assert.equal(element('pairContext').textContent,'Context: paged stub');
-  assert.equal(element('pairAVersion').textContent,'obs_01 · v3');
-  assert.equal(element('pairBVersion').textContent,'obs_01 · v3');
+  assert.equal(element('pairAVersion').textContent,'v3');
+  assert.equal(element('pairBVersion').textContent,'v3');
   assert.equal(element('pairAValue').textContent,element('pairBValue').textContent);
 });
 

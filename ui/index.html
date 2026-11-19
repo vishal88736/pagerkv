@@ -5,24 +5,30 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PagerKV Console</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
 :root{
-  --bg:#070b12; --bg-subtle:#0b111e; --panel:#0f172a; --panel-elevated:#141f36;
-  --line:rgba(148,163,184,.10); --line-hover:rgba(148,163,184,.18); --line-bright:rgba(56,189,248,.35);
-  --text:#f8fafc; --text-muted:#94a3b8; --text-dim:#64748b;
-  --c1:#38bdf8; --c2:#0284c7; --c3:#0369a1; --c4:#0c4a6e;
-  --ok:#10b981; --warn:#f59e0b; --bad:#f43f5e; --spill:#a855f7;
-  --sans:"Manrope",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  color-scheme:light;
+  --bg:#eeece4; --bg-subtle:#f6f3eb; --panel:#fffdf5; --panel-elevated:#f0ece1;
+  --line:#e4ded1; --line-hover:#c9beaa; --line-bright:#c08d29;
+  --text:#252520; --text-muted:#514f47; --text-dim:#625d51;
+  --accent:#ffda66; --accent-hover:#f2c64f; --charcoal:#2d2d2b;
+  --c1:#77531a; --c2:#343432; --c3:#64615a;
+  --ok:#216548; --warn:#874900; --bad:#a62d45; --spill:#654280;
+  --sans:"Poppins",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
   --mono:"JetBrains Mono",ui-monospace,Menlo,Monaco,monospace;
-  --radius-sm:6px; --radius-md:10px; --radius-lg:14px;
-  --shadow:0 10px 25px -5px rgba(0,0,0,.4), 0 8px 10px -6px rgba(0,0,0,.4);
+  --radius-sm:10px; --radius-md:16px; --radius-lg:24px;
+  --shadow:0 3px 10px rgba(53,43,23,.05);
 }
 *{box-sizing:border-box}
 html,body{margin:0;padding:0}
 body{
-  background:radial-gradient(1400px 800px at 50% -100px, #132238 0%, var(--bg) 60%);
-  background-color:var(--bg); color:var(--text); font-family:var(--sans);
+  background:
+    radial-gradient(ellipse 75% 850px at 96% 120px,#fff0b7 0%,transparent 81%),
+    radial-gradient(ellipse 75% 850px at 94% 70%,#faedc6 0%,transparent 85%),
+    linear-gradient(135deg,#e3e5e6 0%,var(--bg) 58%,#e9e7df);
+  color:var(--text); font-family:var(--sans);
   min-height:100vh; -webkit-font-smoothing:antialiased; line-height:1.5;
 }
 button,input,select,textarea{font:inherit;color:inherit}
@@ -32,7 +38,7 @@ button,input,select,textarea{font:inherit;color:inherit}
 .top{
   display:flex; align-items:center; gap:12px; flex-wrap:wrap;
   padding:14px 28px; border-bottom:1px solid var(--line);
-  background:rgba(11,17,30,.82); backdrop-filter:blur(16px);
+  background:rgba(250,248,235,.92); backdrop-filter:blur(16px);
   position:sticky; top:0; z-index:40;
 }
 .brand{
@@ -41,75 +47,64 @@ button,input,select,textarea{font:inherit;color:inherit}
 }
 .brand-icon{
   width:28px; height:28px; border-radius:7px; background:linear-gradient(135deg, var(--c1), var(--c2));
-  display:flex; align-items:center; justify-content:center; color:#fff; box-shadow:0 0 16px rgba(56,189,248,.35);
+  display:flex; align-items:center; justify-content:center; color:#fff; box-shadow:none;
 }
 .pill{
   display:inline-flex; align-items:center; gap:8px; padding:6px 12px; border-radius:999px;
-  background:rgba(255,255,255,.03); border:1px solid var(--line); color:var(--text-muted);
+  background:var(--bg-subtle); border:1px solid var(--line); color:var(--text-muted);
   font-size:13px; font-weight:400; white-space:nowrap; transition:border-color .2s;
 }
 .pill:hover{border-color:var(--line-hover)}
 .pill b{color:var(--text); font-weight:600}
-.pill svg{flex:none; color:var(--text-dim)}
 .dot{width:7px;height:7px;border-radius:50%;background:var(--text-dim);flex:none;transition:background-color .2s, box-shadow .2s}
-.dot.ok{background:var(--ok);box-shadow:0 0 8px var(--ok)}
-.dot.bad{background:var(--bad);box-shadow:0 0 8px var(--bad)}
-.dot.warn{background:var(--warn);box-shadow:0 0 8px var(--warn)}
+.dot.ok{background:var(--ok);box-shadow:none}
+.dot.bad{background:var(--bad);box-shadow:none}
+.dot.warn{background:var(--warn);box-shadow:none}
 .pill select{
   appearance:none; background:transparent; border:0; color:var(--text); font-weight:600;
   padding-right:18px; cursor:pointer; outline:none; font-size:13px;
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.5'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23736b5d' stroke-width='2.5'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   background-repeat:no-repeat; background-position:right center;
 }
 .pill select option{background:var(--panel);color:var(--text)}
-.spacer{flex:1}
 .live{font-size:12px; color:var(--text-dim); display:flex; align-items:center; gap:8px; font-family:var(--mono)}
 
 /* ---------- Layout Containers ---------- */
-.main-wrapper{max-width:1440px; margin:0 auto; padding:20px 24px 60px}
-.app-intro{
-  margin:0 0 16px; font-size:13px; color:var(--text-muted); display:flex; align-items:center; justify-content:space-between;
-  padding:10px 16px; border-radius:var(--radius-md); background:rgba(56,189,248,.04); border:1px solid rgba(56,189,248,.12);
-}
-.app-intro strong{color:var(--c1); font-weight:600}
-.banner{display:none; margin:0 0 16px; padding:12px 18px; border-radius:var(--radius-md); border:1px solid rgba(244,63,94,.3); background:rgba(244,63,94,.08); color:#fecdd3; font-size:13px}
+.banner{display:none; margin:0 0 16px; padding:12px 18px; border-radius:var(--radius-md); border:1px solid rgba(244,63,94,.3); background:rgba(244,63,94,.08); color:var(--bad); font-size:13px}
 
 /* ---------- Guided Demo Section ---------- */
 .demo-panel{
-  background:linear-gradient(180deg, var(--panel-elevated) 0%, var(--panel) 100%);
+  background:var(--panel);
   border:1px solid var(--line-hover); border-radius:var(--radius-lg); padding:20px 24px;
   margin-bottom:20px; box-shadow:var(--shadow); position:relative; overflow:hidden;
 }
-.demo-panel::before{
-  content:""; position:absolute; top:0; left:0; right:0; height:2px;
-  background:linear-gradient(90deg, var(--c1) 0%, var(--spill) 50%, var(--ok) 100%);
-}
+
 .demo-heading{display:flex; justify-content:space-between; align-items:center; gap:16px; flex-wrap:wrap; margin-bottom:14px}
 .demo-heading h2{font-size:16px; font-weight:600; margin:0; display:flex; align-items:center; gap:8px; color:var(--text)}
-.demo-heading .badge{font-size:11px; padding:2px 8px; border-radius:999px; background:rgba(56,189,248,.12); color:var(--c1); font-weight:500; font-family:var(--mono)}
+
 .demo-actions{display:flex; gap:10px; flex-wrap:wrap}
 .demo-steps{
   display:grid; grid-template-columns:repeat(5, 1fr); gap:8px; list-style:none; padding:0; margin:0 0 14px; font-size:12px;
 }
 .demo-steps li{
   border:1px solid var(--line); border-radius:var(--radius-sm); padding:10px 12px;
-  background:rgba(255,255,255,.02); color:var(--text-dim); transition:all .2s;
+  background:var(--bg-subtle); color:var(--text-dim); transition:all .2s;
   display:flex; align-items:center; gap:8px; font-weight:500;
 }
 .demo-steps li span{
-  width:20px; height:20px; border-radius:50%; background:rgba(255,255,255,.05);
+  width:20px; height:20px; border-radius:50%; background:var(--bg-subtle);
   display:inline-flex; align-items:center; justify-content:center; font-size:11px; font-family:var(--mono); flex:none;
 }
 .demo-steps .current{
-  color:var(--c1); border-color:var(--line-bright); background:rgba(56,189,248,.08);
+  color:var(--c1); border-color:var(--line-bright); background:rgba(213,169,55,.08);
 }
-.demo-steps .current span{background:var(--c1); color:#000; font-weight:700}
+.demo-steps .current span{background:var(--c1); color:#fff; font-weight:700}
 .demo-steps .complete{
   color:var(--ok); border-color:rgba(16,185,129,.35); background:rgba(16,185,129,.05);
 }
-.demo-steps .complete span{background:var(--ok); color:#000; font-weight:700}
+.demo-steps .complete span{background:var(--ok); color:#fff; font-weight:700}
 .demo-proof-box{
-  background:rgba(0,0,0,.35); border:1px solid var(--line); border-radius:var(--radius-md);
+  background:var(--bg-subtle); border:1px solid var(--line); border-radius:var(--radius-md);
   padding:12px 16px; margin:0; display:flex; flex-direction:column; gap:4px;
 }
 .demo-proof{font-size:13.5px; color:var(--text); line-height:1.6; margin:0; font-weight:500}
@@ -136,7 +131,7 @@ button,input,select,textarea{font:inherit;color:inherit}
 .chip.ok{color:var(--ok); background:rgba(16,185,129,.1)}
 .chip.warn{color:var(--warn); background:rgba(245,158,11,.1)}
 .chip.bad{color:var(--bad); background:rgba(244,63,94,.1)}
-.chip.mut{color:var(--text-muted); background:rgba(255,255,255,.05)}
+.chip.mut{color:var(--text-muted); background:var(--bg-subtle)}
 
 /* ---------- Node Transfer & Wire Animation ---------- */
 .transfer{
@@ -149,12 +144,12 @@ button,input,select,textarea{font:inherit;color:inherit}
 .transfer-head strong{font-size:15px; font-weight:600; color:var(--text); display:flex; align-items:center; gap:8px}
 .transfer-head span{font-size:12.5px; color:var(--text-muted); font-family:var(--mono)}
 .transfer-track{
-  display:flex; align-items:center; gap:16px; background:rgba(0,0,0,.25); border:1px solid var(--line);
+  display:flex; align-items:center; gap:16px; background:var(--bg-subtle); border:1px solid var(--line);
   border-radius:var(--radius-md); padding:16px 20px; margin-bottom:14px;
 }
 .transfer-node{
   flex:1; border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px 16px;
-  background:rgba(255,255,255,.02); font-family:var(--mono); font-size:13px; transition:border-color .2s;
+  background:var(--bg-subtle); font-family:var(--mono); font-size:13px; transition:border-color .2s;
 }
 .transfer-node b{display:block; font-size:13px; color:var(--text); margin-bottom:4px}
 .node-role{display:block; font-family:var(--sans); font-size:11.5px; color:var(--text-muted); line-height:1.4}
@@ -167,30 +162,30 @@ button,input,select,textarea{font:inherit;color:inherit}
 .transfer[data-state="ok"] .transfer-node:last-child{border-color:rgba(16,185,129,.5); box-shadow:0 0 14px rgba(16,185,129,.12)}
 .transfer[data-state="bad"] .transfer-node:last-child{border-color:rgba(244,63,94,.5); box-shadow:0 0 14px rgba(244,63,94,.12)}
 .transfer-detail{
-  font-family:var(--mono); font-size:12.5px; color:var(--c1); background:rgba(56,189,248,.05);
-  border:1px solid rgba(56,189,248,.15); border-radius:var(--radius-sm); padding:8px 14px; margin-bottom:14px;
+  font-family:var(--mono); font-size:12.5px; color:var(--c1); background:rgba(213,169,55,.05);
+  border:1px solid rgba(213,169,55,.15); border-radius:var(--radius-sm); padding:8px 14px; margin-bottom:14px;
 }
 .phase-row{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px}
 .phase{
   font-size:11px; padding:5px 10px; border-radius:var(--radius-sm); border:1px solid var(--line);
-  color:var(--text-dim); font-family:var(--mono); background:rgba(255,255,255,.02);
+  color:var(--text-dim); font-family:var(--mono); background:var(--bg-subtle);
 }
 .phase[data-phase="done"]{color:var(--ok); border-color:rgba(16,185,129,.35); background:rgba(16,185,129,.08)}
-.phase[data-phase="active"]{color:var(--c1); border-color:var(--line-bright); background:rgba(56,189,248,.1)}
+.phase[data-phase="active"]{color:var(--c1); border-color:var(--line-bright); background:rgba(213,169,55,.1)}
 .phase[data-phase="failed"]{color:var(--bad); border-color:rgba(244,63,94,.4); background:rgba(244,63,94,.08)}
 .phase[data-phase="context"]{color:var(--spill); border-color:rgba(168,85,247,.4); background:rgba(168,85,247,.08)}
 
 /* ---------- Evidence Grid ---------- */
 .evidence-grid{display:grid; grid-template-columns:1fr 1fr; gap:16px}
 .evidence-card{
-  background:rgba(0,0,0,.35); border:1px solid var(--line); border-radius:var(--radius-md); padding:16px;
+  background:var(--bg-subtle); border:1px solid var(--line); border-radius:var(--radius-md); padding:16px;
 }
 .evidence-card h3{margin:0 0 10px; font-size:12.5px; text-transform:uppercase; letter-spacing:.5px; color:var(--text-muted); font-weight:600}
 .request-route{font-family:var(--mono); font-size:13px; color:var(--c1); font-weight:600; margin-bottom:6px}
 .request-body{
-  margin:0 0 10px; padding:10px 12px; background:rgba(0,0,0,.45); border:1px solid var(--line);
+  margin:0 0 10px; padding:10px 12px; background:var(--bg-subtle); border:1px solid var(--line);
   border-radius:var(--radius-sm); max-height:110px; overflow:auto; white-space:pre-wrap;
-  word-break:break-word; font-size:11.5px; font-family:var(--mono); color:#cbd5e1;
+  word-break:break-word; font-size:11.5px; font-family:var(--mono); color:var(--text-muted);
 }
 .request-outcome, .result-when{font-size:12px; color:var(--text-muted); font-family:var(--mono)}
 .result-meta{display:grid; grid-template-columns:auto 1fr; gap:6px 14px; font-size:12px; margin-bottom:8px}
@@ -200,22 +195,16 @@ button,input,select,textarea{font:inherit;color:inherit}
 .ok-text{color:var(--ok)} .bad-text{color:var(--bad)}
 
 /* ---------- Paired Copy Cards ---------- */
-.copy-pair{
-  margin-top:16px; padding:16px; background:rgba(56,189,248,.03); border:1px solid rgba(56,189,248,.18);
-  border-radius:var(--radius-md);
-}
+.copy-pair{border:1px solid var(--line);border-radius:var(--radius-sm);padding:10px 12px}
 .copy-pair[hidden]{display:none}
-.pair-head{display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:12px}
-.pair-head strong{font-family:var(--mono); font-size:14px; color:var(--c1)}
-.pair-badge{padding:3px 9px; border-radius:999px; font-size:11.5px; font-family:var(--mono); border:1px solid var(--line); background:rgba(255,255,255,.03)}
-.pair-context{color:var(--spill); border-color:rgba(168,85,247,.3); background:rgba(168,85,247,.08)}
+.copy-pair summary span{margin-left:6px;font-weight:400;color:var(--text-muted)}
+.pair-context{margin:0 0 10px;color:var(--text-muted);font-size:.8125rem}
 .pair-grid{display:grid; grid-template-columns:1fr 1fr; gap:14px}
-.pair-card{background:rgba(0,0,0,.35); border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px}
+.pair-card{background:var(--bg-subtle); border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px}
 .pair-heading{margin:0 0 6px; font-size:11px; text-transform:uppercase; color:var(--text-dim); letter-spacing:.5px}
 .pair-title{font-family:var(--mono); font-size:12px; color:var(--text); font-weight:600; margin-bottom:6px}
 .pair-value{
-  margin:0; padding:8px 10px; background:rgba(0,0,0,.4); border-radius:var(--radius-sm);
-  font-family:var(--mono); font-size:11px; color:var(--text-muted); max-height:85px; overflow:auto;
+  margin:0; font-family:var(--mono); font-size:12px; color:var(--text-muted); max-height:8rem; overflow:auto;
   white-space:pre-wrap; word-break:break-word;
 }
 
@@ -228,30 +217,31 @@ button,input,select,textarea{font:inherit;color:inherit}
   padding:22px; box-shadow:var(--shadow); display:flex; flex-direction:column; justify-content:space-between;
 }
 .comp h3{margin:0 0 16px; font-size:15px; font-weight:600; color:var(--text)}
-.seg{display:flex; height:54px; border-radius:var(--radius-sm); overflow:hidden; background:rgba(0,0,0,.3); margin-bottom:14px}
+.seg{display:flex; height:54px; border-radius:var(--radius-sm); overflow:hidden; background:var(--bg-subtle); margin-bottom:14px}
 .seg > div{position:relative; display:flex; flex-direction:column; justify-content:center; min-width:0; transition:flex-basis .4s ease; padding:0 6px}
 .seg .pct{font-size:13px; font-weight:700; font-family:var(--mono); text-align:center; overflow:hidden}
 .seg .bars{display:none}
-.budget{margin-top:10px; height:20px; border-radius:var(--radius-sm); position:relative; background:rgba(0,0,0,.4); border:1px solid var(--line); overflow:hidden}
+.budget{margin-top:10px; height:20px; border-radius:var(--radius-sm); position:relative; background:var(--bg-subtle); border:1px solid var(--line); overflow:hidden}
 .budget .fill{position:absolute; inset:0 auto 0 0; background:linear-gradient(90deg, var(--c2), var(--c1)); transition:width .4s ease; border-radius:var(--radius-sm)}
-.budget .cap{position:absolute; top:0; bottom:0; width:2px; background:var(--bad); right:0; box-shadow:0 0 8px var(--bad)}
+.budget .cap{position:absolute; top:0; bottom:0; width:2px; background:var(--bad); right:0; box-shadow:none}
 .budget-row{display:flex; justify-content:space-between; font-size:12px; color:var(--text-muted); margin-top:6px; font-family:var(--mono)}
 .legend{margin-top:18px; display:flex; flex-direction:column; gap:8px}
-.legend div{display:flex; align-items:center; gap:10px; font-size:12.5px; color:#cbd5e1}
+.legend div{display:flex; align-items:center; gap:10px; font-size:12.5px; color:var(--text-muted)}
 .legend i{width:9px; height:9px; border-radius:50%; flex:none}
-.legend .lead{flex:1; border-bottom:1px dotted rgba(255,255,255,.12); transform:translateY(-2px)}
+.legend .lead{flex:1; border-bottom:1px dotted var(--line-hover); transform:translateY(-2px)}
 .legend b{font-family:var(--mono); font-size:12px; color:var(--text)}
 
 .viz{
   background:var(--panel); border:1px solid var(--line); border-radius:var(--radius-lg);
-  position:relative; min-height:480px; box-shadow:var(--shadow); overflow:hidden;
+  min-width:0; box-shadow:var(--shadow); overflow:hidden; display:grid; align-items:center;
 }
-.viz svg#iso{width:100%; height:100%; min-height:480px; display:block}
-.floor-label{font-family:var(--mono); font-size:11px; letter-spacing:1px; fill:var(--text-muted); font-weight:600}
-.block-label{font-family:var(--mono); font-size:10px; fill:#fff; paint-order:stroke; stroke:#070b12; stroke-width:3px; pointer-events:none}
-.blk{cursor:pointer; transition:opacity .2s, filter .2s}
-.blk:hover{filter:brightness(1.4)}
-.blk.sel{filter:brightness(1.6) drop-shadow(0 0 8px var(--c1))}
+.viz svg#iso{width:100%;height:auto;display:block}
+.floor-label{font-family:var(--sans);font-size:13px;fill:var(--text);font-weight:600}
+.block-label,.link-label{font-family:var(--mono);font-size:11px;fill:var(--text-muted);pointer-events:none}
+.floor-label.offline,.link-label.offline{fill:var(--bad)}
+.blk{cursor:pointer}
+.blk:hover,.blk:focus-visible{filter:brightness(1.15)}
+.blk.sel polygon{stroke:var(--text);stroke-width:2}
 
 /* ---------- Timeline Section ---------- */
 .timeline{margin-bottom:20px}
@@ -262,12 +252,12 @@ button,input,select,textarea{font:inherit;color:inherit}
 .panel-head{display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:16px}
 .panel h3{margin:0; font-size:15px; font-weight:600; display:flex; align-items:center; gap:10px; color:var(--text)}
 .panel h3 .sub{color:var(--text-dim); font-size:12.5px; font-weight:400; font-family:var(--mono)}
-.tabs{display:inline-flex; gap:4px; background:rgba(0,0,0,.3); padding:3px; border-radius:var(--radius-sm); border:1px solid var(--line)}
+.tabs{display:inline-flex; gap:4px; background:var(--bg-subtle); padding:3px; border-radius:var(--radius-sm); border:1px solid var(--line)}
 .tab{
   background:transparent; border:0; color:var(--text-muted); padding:5px 12px; font-size:12px;
   cursor:pointer; border-radius:4px; font-weight:500; transition:all .2s;
 }
-.tab.on{color:#fff; background:rgba(56,189,248,.18); font-weight:600; box-shadow:0 1px 3px rgba(0,0,0,.3)}
+.tab.on{color:var(--c1); background:var(--panel); font-weight:600; box-shadow:var(--shadow)}
 svg.chart{display:block; width:100%; height:200px}
 .chart-legend{display:flex; flex-wrap:wrap; gap:16px; font-size:12px; color:var(--text-muted); margin-top:12px; font-family:var(--mono)}
 .chart-legend i{display:inline-block; width:12px; height:3px; vertical-align:middle; margin-right:6px}
@@ -285,69 +275,63 @@ th{
   text-transform:uppercase; padding:10px 12px; border-bottom:1px solid var(--line); position:sticky; top:0;
   background:var(--panel-elevated); z-index:10;
 }
-td{padding:9px 12px; border-bottom:1px solid rgba(255,255,255,.04); font-variant-numeric:tabular-nums; white-space:nowrap}
+td{padding:9px 12px; border-bottom:1px solid var(--line); font-variant-numeric:tabular-nums; white-space:nowrap}
 tr.row{cursor:pointer; transition:background-color .15s}
-tr.row:hover td{background:rgba(56,189,248,.05)}
-tr.row.sel td{background:rgba(56,189,248,.1); border-color:rgba(56,189,248,.2)}
+tr.row:hover td{background:rgba(213,169,55,.05)}
+tr.row.sel td{background:rgba(213,169,55,.1); border-color:rgba(213,169,55,.2)}
 td.key{font-family:var(--mono); color:var(--c1); font-weight:500; max-width:200px; overflow:hidden; text-overflow:ellipsis}
 .tag{font-size:11px; padding:2px 7px; border-radius:4px; font-family:var(--mono); font-weight:500}
-.tag.res{color:var(--c1); background:rgba(56,189,248,.1)}
-.tag.pg{color:var(--text-muted); background:rgba(255,255,255,.05)}
+.tag.res{color:var(--c1); background:rgba(213,169,55,.1)}
+.tag.pg{color:var(--text-muted); background:var(--bg-subtle)}
 .tag.ok{color:var(--ok); background:rgba(16,185,129,.1)}
 .tag.dirty{color:var(--warn); background:rgba(245,158,11,.12)}
-.tag.pend{color:#e2e8f0; background:rgba(226,232,240,.1)}
+.tag.pend{color:var(--text-muted); background:var(--panel-elevated)}
 .tag.spill{color:var(--spill); background:rgba(168,85,247,.12)}
-.tag.pin{color:var(--c1); border:1px solid rgba(56,189,248,.35); background:transparent}
-.lock{color:var(--warn); font-size:10px}
+.tag.pin{color:var(--c1); border:1px solid rgba(213,169,55,.35); background:transparent}
 .empty{color:var(--text-dim); font-size:13px; padding:32px 0; text-align:center}
 
 /* ---------- Sidebar Cards & Controls ---------- */
 .side{display:flex; flex-direction:column; gap:18px}
 .field{display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px}
 .field input, .field textarea{
-  flex:1; background:rgba(0,0,0,.35); border:1px solid var(--line); padding:9px 12px;
+  flex:1; background:var(--bg-subtle); border:1px solid var(--line); padding:9px 12px;
   border-radius:var(--radius-sm); outline:none; min-width:0; color:var(--text); transition:border-color .2s;
 }
 .field textarea{min-height:74px; resize:vertical; font-family:var(--mono); font-size:12px; line-height:1.45}
 .field input:focus, .field textarea:focus{border-color:var(--c1)}
 .btn{
-  background:rgba(56,189,248,.12); border:1px solid rgba(56,189,248,.35); color:var(--c1);
+  background:rgba(213,169,55,.12); border:1px solid rgba(213,169,55,.35); color:var(--c1);
   padding:8px 14px; border-radius:var(--radius-sm); cursor:pointer; font-size:12.5px; font-weight:500;
   transition:all .2s; white-space:nowrap; display:inline-flex; align-items:center; justify-content:center; gap:6px;
 }
-.btn:hover:not(:disabled){background:rgba(56,189,248,.22); border-color:var(--c1); color:#fff}
+.btn:hover:not(:disabled){background:rgba(213,169,55,.22); border-color:var(--c1); color:var(--c1)}
 .btn.ghost{background:transparent; border-color:var(--line); color:var(--text-muted)}
 .btn.ghost:hover:not(:disabled){border-color:var(--line-hover); color:var(--text)}
 .btn.danger{border-color:rgba(244,63,94,.4); color:var(--bad); background:rgba(244,63,94,.08)}
-.btn.danger:hover:not(:disabled){background:rgba(244,63,94,.2); color:#fff}
+.btn.danger:hover:not(:disabled){background:#fee8ed; color:var(--bad)}
 .btn:disabled{opacity:.4; cursor:not-allowed}
 pre.out{
-  margin:0; background:rgba(0,0,0,.45); border:1px solid var(--line); border-radius:var(--radius-sm);
-  padding:12px; font-family:var(--mono); font-size:11.5px; line-height:1.5; color:#cbd5e1;
+  margin:0; background:var(--bg-subtle); border:1px solid var(--line); border-radius:var(--radius-sm);
+  padding:12px; font-family:var(--mono); font-size:11.5px; line-height:1.5; color:var(--text-muted);
   max-height:220px; overflow:auto; white-space:pre-wrap; word-break:break-word;
 }
-.detail-meta{display:grid; grid-template-columns:1fr 1fr; gap:6px 14px; font-size:12px; margin-bottom:12px}
-.detail-meta span{color:var(--text-dim)}
-.detail-meta b{font-weight:500; font-family:var(--mono); color:var(--text)}
+.detail-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:12px}
+.detail-meta:empty{display:none}
+.detail-meta .version{font-family:var(--mono);font-size:.8125rem;color:var(--text-muted)}
 .res-list{display:flex; flex-direction:column; gap:6px; margin-top:6px}
-.res-list div{
-  display:flex; justify-content:space-between; font-size:12px; padding:7px 10px;
-  background:rgba(255,255,255,.02); border:1px solid var(--line); border-radius:var(--radius-sm); cursor:pointer;
-}
-.res-list div:hover{background:rgba(56,189,248,.08); border-color:rgba(56,189,248,.25)}
 .res-list .k{font-family:var(--mono); color:var(--c1); overflow:hidden; text-overflow:ellipsis}
 .log{display:flex; flex-direction:column; gap:2px; max-height:200px; overflow:auto; font-size:11.5px}
-.log div{display:grid; grid-template-columns:60px 1fr; gap:8px; padding:4px 6px; border-bottom:1px solid rgba(255,255,255,.03)}
+.log div{display:grid; grid-template-columns:60px 1fr; gap:8px; padding:4px 6px; border-bottom:1px solid var(--line)}
 .log time{font-family:var(--mono); color:var(--text-dim)}
 .log .k{font-family:var(--mono); color:var(--c1)}
 .log .warn{color:var(--warn)} .log .bad{color:var(--bad)} .log .ok{color:var(--ok)} .log .spill{color:var(--spill)}
 .prio{display:flex; align-items:center; gap:6px; color:var(--text-muted); font-size:12.5px}
-.prio input{width:64px; background:rgba(0,0,0,.35); border:1px solid var(--line); border-radius:var(--radius-sm); padding:6px; outline:none; color:var(--text); font-family:var(--mono)}
+.prio input{width:64px; background:var(--bg-subtle); border:1px solid var(--line); border-radius:var(--radius-sm); padding:6px; outline:none; color:var(--text); font-family:var(--mono)}
 
 /* ---------- Tooltips & Toast ---------- */
 .tip{
-  position:fixed; pointer-events:none; z-index:70; background:rgba(15,23,42,.96); border:1px solid var(--line-bright);
-  box-shadow:0 12px 24px rgba(0,0,0,.6); border-radius:var(--radius-sm); padding:10px 12px; font-size:12px;
+  position:fixed; pointer-events:none; z-index:70; background:var(--panel); border:1px solid var(--line-bright);
+  box-shadow:var(--shadow); border-radius:var(--radius-sm); padding:10px 12px; font-size:12px;
   line-height:1.55; min-width:210px; display:none; backdrop-filter:blur(8px);
 }
 .tip .k{font-family:var(--mono); color:var(--c1); font-weight:600; margin-bottom:4px}
@@ -360,349 +344,472 @@ pre.out{
 }
 .toast.show{transform:none}
 
-/* ---------- Responsive ---------- */
-@media (max-width:1150px){
-  .stats-grid{grid-template-columns:repeat(2, 1fr)}
-  .stage-grid{grid-template-columns:1fr}
-  .lower{grid-template-columns:1fr}
+/* ---------- Page and workspace ---------- */
+.top{padding:0;position:sticky}
+.header-inner{width:100%;padding:12px 28px;display:flex;align-items:center;gap:24px}
+.brand{margin:0;white-space:nowrap;font-weight:500}
+.brand-icon{width:32px;height:32px;background:var(--charcoal);color:var(--accent);border-radius:50%}
+.sections{display:flex;gap:3px;align-items:center;flex-wrap:wrap;padding:4px;background:var(--panel);border:1px solid var(--line);border-radius:999px}
+.sections a{padding:7px 12px;text-decoration:none;color:var(--text-muted);font-size:.875rem;font-weight:500;border-radius:999px}
+.sections a:hover{background:var(--panel-elevated);color:var(--text)}
+.sections a[aria-current="location"]{background:var(--charcoal);color:var(--panel)}
+.live{margin-left:auto;white-space:nowrap;font-family:var(--sans)}
+main section[id],#putKey,#inspect-key{scroll-margin-top:90px}
+.main-wrapper{padding:30px 28px 56px}
+.page-heading,.section-heading{display:flex;align-items:end;justify-content:space-between;gap:16px;margin-bottom:16px}
+h1{font-size:clamp(1.8rem,4vw,2.8rem);line-height:1.13;font-weight:400;letter-spacing:-.04em;margin:0 0 8px}
+.section-heading h2{font-size:1.38rem;font-weight:500;letter-spacing:-.025em;margin:0 0 3px}
+.page-heading p,.section-heading p,.helper{margin:0;color:var(--text-muted);line-height:1.55}
+.page-heading .btn,.btn.primary{background:var(--accent);color:var(--text);border-color:#e1b94e;text-decoration:none}
+.page-heading .btn:hover,.btn.primary:hover:not(:disabled){background:var(--accent-hover);border-color:var(--line-bright);color:var(--text)}
+.overview-status{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+.pill{background:var(--panel);font-size:.875rem}
+.stats-grid{gap:12px;margin-bottom:0}
+.card{padding:18px 20px}
+.card:first-child{background:#fff4ce}
+.card h3{font-size:.875rem;text-transform:none;letter-spacing:0}
+.big{font-size:clamp(1.85rem,3vw,2.65rem);font-weight:300;letter-spacing:-.045em}
+.card-icon{color:var(--c1);background:#f1ebd9;border-radius:50%;padding:6px}
+.chip,.tag{font-family:var(--sans);font-size:.8125rem}
+.top .live,.sub,.helper,.panel summary{font-size:.875rem}
+.sub{color:var(--text-dim);overflow-wrap:anywhere}
+.workspace,.replication-section,.diagnostics{margin-top:28px}
+.lower{grid-template-columns:minmax(0,1.65fr) minmax(18rem,1fr);gap:14px}
+.side{gap:14px;min-width:0}
+.directory>.panel+.panel{margin-top:14px}
+.panel,.transfer,.demo-panel,.comp{padding:18px}
+#write-key{background:#fff9e7}
+.panel h3,.demo-heading h2,.transfer-head strong,.comp h3{font-size:1rem;font-weight:500}
+.panel-head{margin-bottom:12px}
+.tbl-wrap:focus-visible{outline-offset:-2px}
+table{font-size:.875rem}
+th{font-size:.75rem}
+.key-link{display:block;width:100%;border:0;padding:0;background:none;text-align:left;color:var(--c1);cursor:pointer;text-overflow:ellipsis;overflow:hidden}
+.tag{white-space:nowrap}
+.field label:not(.prio){display:block;font-size:.875rem;font-weight:500}
+.field.stacked{display:grid;gap:5px}
+.field input,.field textarea{background:var(--panel);border-color:var(--line-hover);font-size:1rem;width:100%}
+.field textarea{min-height:92px}
+.btn,.tab{font-size:.875rem;font-weight:500;min-height:36px;cursor:pointer;border-radius:999px}
+.tabs{border-radius:999px}
+.tab.on{background:var(--charcoal);color:var(--panel)}
+.btn.ghost{color:var(--text-muted);background:var(--panel)}
+.btn.ghost:hover:not(:disabled){background:var(--bg-subtle)}
+:focus-visible{outline:2px solid var(--c1);outline-offset:2px}
+.field :focus-visible,.pill select:focus-visible,.prio input:focus-visible{outline:2px solid var(--c1);outline-offset:1px}
+.helper{margin-bottom:12px}
+.form-note{margin:0;min-height:1.5em;color:var(--text-muted);font-size:.875rem;overflow-wrap:anywhere}
+.form-note[data-error="true"]{color:var(--bad)}
+.empty{padding:24px 12px}
+.res-list button{width:100%;text-align:left;cursor:pointer;padding:8px 10px;background:var(--bg-subtle);border:1px solid var(--line);border-radius:6px;display:flex;justify-content:space-between;gap:12px}
+.res-list button:hover{border-color:var(--line-bright)}
+details summary{cursor:pointer;color:var(--text);font-weight:500}
+details[open]>summary{margin-bottom:12px}
+#inspect-key details{margin-bottom:12px}
+#inspect-key details:last-child{margin-bottom:0}
+.detail-result{margin:0 0 12px}
+.detail-result figcaption{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:5px;font-size:.8125rem;font-weight:700;color:var(--text-muted)}
+.detail-result figcaption .btn{min-height:28px;padding:2px 8px;font-size:.8125rem}
+.detail-result .out{max-height:9rem}
+.field.search-field{flex-wrap:nowrap}
+.res-list .search-note{margin:0;color:var(--text-muted);font-size:.875rem}
+.pair-title,.transfer-detail,.toast{overflow-wrap:anywhere}
+.toast{max-width:calc(100vw - 32px);visibility:hidden}
+.toast.show{visibility:visible}
+.phase{font-size:.75rem}
+.node-role,.demo-note,.demo-steps{font-size:.875rem}
+.transfer,.demo-panel,.stage-grid{margin-bottom:12px}
+.transfer-track{margin-bottom:12px}
+.transfer-node{background:var(--panel);min-width:0}
+.transfer-wire{flex:0 1 112px;min-width:44px}
+.transfer-wire::before{border-color:var(--line-hover)}
+.transfer-packet{box-shadow:none}
+.stage-grid{grid-template-columns:minmax(15rem,1fr) minmax(0,2fr);gap:14px}
+.diagnostics .timeline{margin-bottom:12px}
+@media(max-width:880px){
+  .stats-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .lower{grid-template-columns:minmax(0,1fr)}
+  .stage-grid{grid-template-columns:minmax(0,1fr)}
+  .viz{order:-1}
 }
-@media (max-width:768px){
-  .top{padding:12px 16px}
-  .main-wrapper{padding:14px 14px 40px}
-  .stats-grid{grid-template-columns:1fr}
+@media(max-width:640px){
+  .top{position:static}
+  .header-inner{padding:12px 16px;gap:8px;flex-wrap:wrap}
+  .sections{order:1;width:100%;gap:1px;justify-content:space-between;border-radius:18px}
+  .sections a{padding:7px 6px;font-size:.8125rem}
+  main section[id],#putKey,#inspect-key{scroll-margin-top:12px}
+  .main-wrapper{padding:20px 14px 40px}
+  .page-heading{align-items:start;flex-direction:column;gap:10px}
+  .card{padding:12px}
+  table{table-layout:fixed}
+  th,td{padding:8px 6px}
+  th{font-size:.6875rem;letter-spacing:0}
+  th:nth-child(1){width:32%}
+  th:nth-child(2){width:18%}
+  th:nth-child(3){width:25%}
+  th:nth-child(4){width:25%}
+  td .tag{white-space:normal;padding-inline:4px;font-size:.75rem;display:inline-block}
+  .stage-grid,.evidence-grid,.pair-grid{grid-template-columns:minmax(0,1fr)}
   .demo-steps{grid-template-columns:1fr}
-  .evidence-grid, .pair-grid{grid-template-columns:1fr}
-  .transfer-track{gap:8px;padding:12px}
-  .transfer-node{min-width:0;padding:10px 8px}
-  .transfer-node b{font-size:11px;overflow-wrap:anywhere}
-  .node-role{font-size:10px}
-  .transfer-wire{flex:0 0 40px;min-width:40px}
-  .transfer-packet{width:18px}
+  .transfer-track{gap:7px;padding:8px}
+  .transfer-node{padding:8px}
+  .transfer-node b,.node-role{font-size:.75rem}
+  .transfer-wire{flex:none;min-width:30px;width:30px}
+  .transfer-packet{width:14px}
+  .pair-card,.evidence-card{min-width:0}
+}
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{transition:none!important;animation:none!important}
 }
 </style>
 </head>
 <body>
 
 <header class="top">
-  <div class="brand">
-    <div class="brand-icon">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5" opacity=".55"/><rect x="3" y="14" width="7" height="7" rx="1.5" opacity=".55"/><rect x="14" y="14" width="7" height="7" rx="1.5" opacity=".3"/></svg>
+  <div class="header-inner">
+    <div class="brand">
+      <div class="brand-icon">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5" opacity=".55"/><rect x="3" y="14" width="7" height="7" rx="1.5" opacity=".55"/><rect x="14" y="14" width="7" height="7" rx="1.5" opacity=".3"/></svg>
+      </div>
+      PagerKV
     </div>
-    PagerKV
+    <nav class="sections" aria-label="Dashboard sections">
+      <a href="#overview" aria-current="location">Overview</a>
+      <a href="#keys">Keys</a>
+      <a href="#replication">Replication</a>
+      <a href="#diagnostics">Diagnostics</a>
+    </nav>
+    <div class="live"><span class="dot" id="dotLive"></span><span id="liveTxt">Connecting…</span></div>
   </div>
-  <div class="pill" title="Node A (L1 Active Window) health">
-    <span class="dot" id="dotA"></span>Node A: <b id="pillA">connecting…</b>
-  </div>
-  <div class="pill" title="Node B (L2 Lossless Archive) fault-injection mode">
-    <span class="dot" id="dotB"></span>Node B:
-    <select id="faultSel" aria-label="Node B fault mode">
-      <option value="none">Online</option>
-      <option value="slow">Slow (3s)</option>
-      <option value="down">Down</option>
-    </select>
-  </div>
-  <div class="pill" title="Active window tokens / budget">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>
-    Window: <b id="pillWin">–</b>
-  </div>
-  <div class="pill" title="Keys resident in L1 / paged to L2">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg>
-    Keys: <b id="pillKeys">–</b>
-  </div>
-  <div class="pill" title="Live comparison of Node A values and Node B copies">
-    Consistency: <b id="comparisonChip">checking…</b>
-  </div>
-  <div class="spacer"></div>
-  <div class="live"><span class="dot" id="dotLive"></span><span id="liveTxt">polling</span></div>
 </header>
 
-<div class="main-wrapper">
-
-  <div class="app-intro">
-    <div><strong>REST Replication with Context Paging:</strong> Node A retains complete values and manages an active prompt budget; Node B stores full replicas.</div>
-    <div id="backingCount" style="font-family:var(--mono);font-size:12px;color:var(--text-dim)"></div>
-  </div>
-
-  <div class="banner" id="banner"></div>
-
-  <!-- Guided Demonstration -->
-  <section class="demo-panel" aria-label="Guided replication demonstration">
-    <div class="demo-heading">
-      <h2>Interactive Replication Tour <span class="badge">5-STEP PROOF</span></h2>
-      <div class="demo-actions">
-        <button class="btn" id="btnDemoNext">Start guided demo</button>
-        <button class="btn ghost" id="btnDemoReset" disabled>Reset &amp; remove sample keys</button>
-      </div>
-    </div>
-    <ol class="demo-steps" id="demoSteps"></ol>
-    <div class="demo-proof-box">
-      <p class="demo-proof" id="demoProof" role="status" aria-live="polite">First prove a REST write is copied. Then demonstrate failure, local availability, recovery, and finally context paging.</p>
-      <p class="demo-note">Uses real HTTP requests and unique demo keys. The failure step makes B return HTTP 503; recovery retries the pending copies. Reset restores B and removes only this demo’s keys.</p>
-    </div>
-  </section>
-
-  <!-- KPI Stat Cards -->
-  <section class="stats-grid">
-    <div class="card">
-      <div class="card-head">
-        <h3>Active Window</h3>
-        <span class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h10M4 17h6"/></svg></span>
-      </div>
-      <div class="big" id="sWin">–</div>
-      <div class="chip mut" id="sWinChip">–</div>
-    </div>
-    <div class="card">
-      <div class="card-head">
-        <h3>Page Faults</h3>
-        <span class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg></span>
-      </div>
-      <div class="big" id="sPf">–</div>
-      <div class="chip mut" id="sPfChip">since start</div>
-    </div>
-    <div class="card">
-      <div class="card-head">
-        <h3>Tokens Saved</h3>
-        <span class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>
-      </div>
-      <div class="big" id="sSaved">–</div>
-      <div class="chip ok" id="sSavedChip">by context paging</div>
-    </div>
-    <div class="card">
-      <div class="card-head">
-        <h3>Dirty Keys</h3>
-        <span class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></span>
-      </div>
-      <div class="big" id="sDirty">–</div>
-      <div class="chip mut" id="sDirtyChip">eviction blocked</div>
-    </div>
-  </section>
-
-  <!-- Node Topology & Transfer Activity -->
-  <section class="transfer" id="transfer" data-state="idle" aria-label="Replication activity">
-    <div class="transfer-head">
-      <strong><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg> Replication Topology · Node A → Node B · Hydration B → Node A</strong>
-      <span id="transferCounts">Waiting for node status…</span>
-    </div>
-    <div class="transfer-track">
-      <div class="transfer-node">
-        <b>Node A · Primary (L1)</b>
-        <small class="node-role">Accepts writes · stores durable values · manages active prompt budget</small>
-      </div>
-      <div class="transfer-wire">
-        <div class="transfer-packet" id="transferPacket"></div>
-      </div>
-      <div class="transfer-node">
-        <b>Node B · Replica (L2 Archive)</b>
-        <small class="node-role">Full-text SQLite archive · returns version/digest acknowledgments · extracts summary stubs</small>
-      </div>
-    </div>
-    <div class="transfer-detail" id="transferDetail" role="status" aria-live="polite">Write a context block to see it copied. Paging changes the active prompt, not the durable primary value.</div>
-    <div class="phase-row" aria-label="Write and replication phases">
-      <span class="phase" id="phaseRequest">1 · REST request</span>
-      <span class="phase" id="phaseLocal">2 · saved on A</span>
-      <span class="phase" id="phaseCopy">3 · HTTP copy A → B</span>
-      <span class="phase" id="phaseAck">4 · B acknowledgment</span>
-      <span class="phase" id="phaseContext">5 · context: separate view</span>
-    </div>
-    <div class="evidence-grid">
-      <div class="evidence-card">
-        <h3>Client Request → Node A</h3>
-        <div class="request-route" id="requestRoute">No request yet</div>
-        <pre class="request-body" id="requestBody">Write a key or run the guided demo to see the HTTP method, endpoint and body.</pre>
-        <div class="request-outcome" id="requestOutcome">A local HTTP 200 and a replica acknowledgment are separate results.</div>
-      </div>
-      <div class="evidence-card">
-        <h3>Replication Result → Node B</h3>
-        <div class="result-meta">
-          <span>Key / version:</span><b id="resultKey">—</b>
-          <span>HTTP call:</span><b id="resultRoute">POST /replicate</b>
-          <span>B response:</span><b id="resultHttp">—</b>
-          <span>Duration:</span><b id="resultDuration">—</b>
-          <span>Trigger:</span><b id="resultSource">—</b>
-        </div>
-        <p class="result-reason" id="resultReason">Awaiting replication attempt.</p>
-        <div class="result-when" id="resultWhen"></div>
-      </div>
-    </div>
-    <div class="copy-pair" id="copyPair" hidden>
-      <div class="pair-head">
-        <strong id="pairKey"></strong>
-        <span class="pair-badge" id="pairComparison">Replication: checking</span>
-        <span class="pair-badge pair-context" id="pairContext">Context: checking</span>
-      </div>
-      <div class="pair-grid">
-        <div class="pair-card">
-          <h3 class="pair-heading">Node A · Durable Local Value</h3>
-          <div class="pair-title" id="pairAVersion">—</div>
-          <pre class="pair-value" id="pairAValue"></pre>
-        </div>
-        <div class="pair-card">
-          <h3 class="pair-heading">Node B · Lossless Replica Copy</h3>
-          <div class="pair-title" id="pairBVersion">—</div>
-          <pre class="pair-value" id="pairBValue"></pre>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- Architecture Visualization & Composition -->
-  <section class="stage-grid">
-    <div class="comp" id="comp">
+<main class="main-wrapper">
+  <div class="banner" id="banner" role="alert"></div>
+  <section id="overview" aria-labelledby="overview-title">
+    <div class="page-heading">
       <div>
-        <h3>Window Composition</h3>
-        <div class="seg" id="seg"></div>
-        <div class="budget">
-          <div class="fill" id="budgetFill"></div>
-          <div class="cap"></div>
-        </div>
-        <div class="budget-row">
-          <span id="budgetL">0 tokens</span>
-          <span id="budgetR">budget –</span>
-        </div>
+        <h1 id="overview-title">Replication dashboard</h1>
+        <p>Manage stored values, check their copies, and see what fits in the active prompt.</p>
       </div>
-      <div class="legend" id="legend"></div>
+      <a class="btn" href="#putKey">Add a key</a>
     </div>
-    <div class="viz" id="viz">
-      <svg id="iso" role="img" aria-label="Isometric view of L1 window and L2 archive"></svg>
+    <div class="overview-status">
+      <div class="pill" title="Node A (L1 Active Window) health">
+        <span class="dot" id="dotA"></span>Primary (A): <b id="pillA">Connecting…</b>
+      </div>
+      <div class="pill"><span class="dot" id="dotB"></span>Replica (B): <b id="pillB">Checking…</b></div>
+      <div class="pill" title="Live comparison of Node A values and Node B copies">
+        Consistency: <b id="comparisonChip">Checking…</b>
+      </div>
+    </div>
+
+    <section class="stats-grid">
+      <div class="card">
+        <div class="card-head">
+          <h3>Prompt usage</h3>
+          <span class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h10M4 17h6"/></svg></span>
+        </div>
+        <div class="big" id="sWin">–</div>
+        <div class="chip mut" id="sWinChip">–</div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <h3>Context restores</h3>
+          <span class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg></span>
+        </div>
+        <div class="big" id="sPf">–</div>
+        <div class="chip mut" id="sPfChip">From archive or spill</div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <h3>Prompt tokens saved</h3>
+          <span class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>
+        </div>
+        <div class="big" id="sSaved">–</div>
+        <div class="chip ok" id="sSavedChip">By using summaries</div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <h3>Pending copies</h3>
+          <span class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></span>
+        </div>
+        <div class="big" id="sDirty">–</div>
+        <div class="chip mut" id="sDirtyChip">Checking replica</div>
+      </div>
+    </section>
+
+  </section>
+
+  <section class="workspace" id="keys" aria-labelledby="keys-title">
+    <div class="section-heading">
+      <div><h2 id="keys-title">Key workspace</h2><p>Save, find, and inspect values.</p></div>
+    </div>
+    <div class="lower">
+      <div class="directory">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Stored keys</h3>
+            <span class="sub" id="keyCount"></span>
+          </div>
+          <div class="tbl-wrap" role="region" aria-label="Stored keys" tabindex="0">
+            <table>
+              <thead>
+                <tr>
+                  <th>Key</th>
+                  <th>Version</th>
+                  <th>In prompt</th>
+                  <th>Replica</th>
+                </tr>
+              </thead>
+              <tbody id="rows"></tbody>
+            </table>
+            <div class="empty" id="emptyRows">No keys yet. Save a key to see it here.</div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Find a key</h3>
+          </div>
+          <div class="field search-field">
+            <input id="q" aria-label="Search keys or text" placeholder="Search keys or text" autocomplete="off">
+            <button class="btn" id="btnSearch">Search</button>
+          </div>
+          <div class="res-list" id="results" aria-live="polite"></div>
+        </div>
+
+
+      </div>
+      <div class="side">
+
+        <div class="panel" id="write-key">
+          <div class="panel-head">
+            <h3>Save a key</h3>
+          </div>
+          <div class="field stacked"><label for="putKey">Key</label><input id="putKey" placeholder="e.g. db/schema" maxlength="512" autocomplete="off"></div>
+          <div class="field stacked"><label for="putText">Value</label><textarea id="putText" maxlength="1000000" placeholder="Text to store"></textarea></div>
+          <div class="field"><button class="btn primary" id="btnPut">Save and replicate</button></div>
+          <p class="form-note" id="writeNote" role="status"></p>
+        </div>
+
+        <div class="panel" id="inspect-key">
+          <div class="panel-head">
+            <h3 id="inspect-title" tabindex="-1">Selected key</h3>
+            <span class="sub" id="selKey">Choose a key to inspect</span>
+          </div>
+          <div class="detail-meta" id="detailMeta"></div>
+          <div class="field">
+            <button class="btn ghost" id="btnValue" disabled>Read full value</button>
+            <button class="btn" id="btnHydrate" disabled>Restore to prompt</button>
+            <button class="btn ghost" id="btnView" disabled>View prompt block</button>
+            <button class="btn danger" id="btnDelete" disabled>Delete</button>
+          </div>
+          <figure class="detail-result" id="detailResult" hidden>
+            <figcaption><span id="detailLabel"></span><button class="btn ghost" id="btnHideDetail">Hide</button></figcaption>
+            <pre class="out" id="detailOut"></pre>
+          </figure>
+          <details class="copy-pair" id="copyPair" hidden>
+            <summary>Compare copies <span id="pairComparison"></span></summary>
+            <p class="pair-context" id="pairContext"></p>
+            <div class="pair-grid">
+              <div class="pair-card">
+                <h4 class="pair-heading">Node A · Primary</h4>
+                <div class="pair-title" id="pairAVersion">—</div>
+                <pre class="pair-value" id="pairAValue"></pre>
+              </div>
+              <div class="pair-card">
+                <h4 class="pair-heading">Node B · Replica</h4>
+                <div class="pair-title" id="pairBVersion">—</div>
+                <pre class="pair-value" id="pairBValue"></pre>
+              </div>
+            </div>
+          </details>
+          <details>
+            <summary>Pinning and priority</summary>
+            <div class="field">
+              <button class="btn ghost" id="btnPin" disabled>Pin</button>
+              <label class="prio">priority <input type="number" id="prio" min="-100" max="100" value="0" disabled></label>
+              <button class="btn ghost" id="btnPrio" disabled>Set</button>
+            </div>
+          </details>
+        </div>
+
+      </div>
     </div>
   </section>
 
-  <!-- Timeline & Analytics -->
-  <section class="timeline">
-    <div class="panel">
-      <div class="panel-head">
-        <h3>
-          Token Window Dynamics
-          <span class="sub" id="tlSub"></span>
-        </h3>
-        <span class="tabs" role="tablist">
-          <button class="tab on" data-tab="live" role="tab">Live Trend</button>
-          <button class="tab" data-tab="replay" role="tab">Benchmark Replay</button>
-        </span>
-      </div>
-      <div id="tlLive">
-        <svg id="liveChart" class="chart" role="img" aria-label="Window tokens over time"></svg>
-        <div class="chart-legend">
-          <span><i style="background:var(--c1)"></i>window tokens</span>
-          <span><i style="background:var(--bad);height:1px"></i>budget</span>
-          <span><i style="background:var(--warn);width:3px;height:10px"></i>page fault</span>
-          <span><i style="background:var(--spill);height:8px;opacity:.6"></i>dirty / spilled keys</span>
-        </div>
-      </div>
-      <div id="tlReplay" hidden>
-        <div class="replay-ctl">
-          <button class="btn" id="btnPlay">Play</button>
-          <input type="range" id="replaySlider" min="1" max="100" value="100" aria-label="Benchmark turn">
-          <span class="replay-info" id="replayInfo"></span>
-        </div>
-        <svg id="replayChart" class="chart" role="img" aria-label="Benchmark replay"></svg>
-        <div class="chart-legend">
-          <span><i style="background:#f43f5e"></i>baseline agent (no pager)</span>
-          <span><i style="background:var(--c1)"></i>PagerKV prompt</span>
-          <span><i style="background:var(--bad);height:1px"></i>budget</span>
-          <span><i style="background:rgba(244,63,94,.25);height:10px"></i>Node B down</span>
-          <span><i style="background:var(--spill);height:8px;opacity:.6"></i>spilled keys</span>
-        </div>
-      </div>
+  <section class="replication-section" id="replication" aria-labelledby="replication-title">
+    <div class="section-heading">
+      <div><h2 id="replication-title">Replication</h2><p>See how values move between nodes and what happens during an outage.</p></div>
     </div>
+
+    <section class="transfer" id="transfer" data-state="idle" aria-label="Replication activity">
+      <div class="transfer-head">
+        <strong><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg> Live replication</strong>
+        <span id="transferCounts">Waiting for node status…</span>
+      </div>
+      <div class="transfer-track">
+        <div class="transfer-node">
+          <b>Node A · Primary</b>
+          <small class="node-role">Saves each value and manages the active prompt.</small>
+        </div>
+        <div class="transfer-wire">
+          <div class="transfer-packet" id="transferPacket"></div>
+        </div>
+        <div class="transfer-node">
+          <b>Node B · Replica</b>
+          <small class="node-role">Stores a full copy and confirms its version.</small>
+        </div>
+      </div>
+      <div class="transfer-detail" id="transferDetail" role="status" aria-live="polite">Write a context block to see it copied. Paging changes the active prompt, not the durable primary value.</div>
+      <details class="evidence">
+        <summary>HTTP request and response details</summary>
+        <div class="phase-row" aria-label="Write and replication phases">
+          <span class="phase" id="phaseRequest">1 · REST request</span>
+          <span class="phase" id="phaseLocal">2 · saved on A</span>
+          <span class="phase" id="phaseCopy">3 · HTTP copy A → B</span>
+          <span class="phase" id="phaseAck">4 · B acknowledgment</span>
+          <span class="phase" id="phaseContext">5 · context: separate view</span>
+        </div>
+        <div class="evidence-grid">
+          <div class="evidence-card">
+            <h3>Client Request → Node A</h3>
+            <div class="request-route" id="requestRoute">No request yet</div>
+            <pre class="request-body" id="requestBody">Write a key or run the guided demo to see the HTTP method, endpoint and body.</pre>
+            <div class="request-outcome" id="requestOutcome">A local HTTP 200 and a replica acknowledgment are separate results.</div>
+          </div>
+          <div class="evidence-card">
+            <h3>Replication Result → Node B</h3>
+            <div class="result-meta">
+              <span>Key / version:</span><b id="resultKey">—</b>
+              <span>HTTP call:</span><b id="resultRoute">POST /replicate</b>
+              <span>B response:</span><b id="resultHttp">—</b>
+              <span>Duration:</span><b id="resultDuration">—</b>
+              <span>Trigger:</span><b id="resultSource">—</b>
+            </div>
+            <p class="result-reason" id="resultReason">Awaiting replication attempt.</p>
+            <div class="result-when" id="resultWhen"></div>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <section class="demo-panel" aria-label="Guided replication demonstration">
+      <div class="demo-heading">
+        <h2>Guided replication demo</h2>
+        <div class="demo-actions">
+          <button class="btn" id="btnDemoNext">Start guided demo</button>
+          <button class="btn ghost" id="btnDemoReset" disabled>Reset demo</button>
+        </div>
+      </div>
+      <ol class="demo-steps" id="demoSteps"></ol>
+      <div class="demo-proof-box">
+        <p class="demo-proof" id="demoProof" role="status" aria-live="polite">Follow a sample key through replication, an outage, recovery, and context paging.</p>
+        <p class="demo-note">The demo temporarily takes the replica offline. Reset restores it and removes the sample keys.</p>
+      </div>
+    </section>
+
+    <details class="panel">
+      <summary>Manual outage simulation</summary>
+      <p class="helper">Change how Node B responds to data requests.</p>
+      <label class="pill">Replica simulation
+        <select id="faultSel">
+          <option value="none">Normal</option>
+          <option value="slow">Slow (3 seconds)</option>
+          <option value="down">Return HTTP 503</option>
+        </select>
+      </label>
+    </details>
   </section>
 
-  <!-- Operations Console (Keys Directory + Inspect/Write/Search Toolset) -->
-  <section class="lower">
-    <div class="panel">
-      <div class="panel-head">
-        <h3>Context Keys Directory</h3>
-        <span class="sub" id="keyCount"></span>
-      </div>
-      <div class="tbl-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Key</th>
-              <th>Version</th>
-              <th>Context</th>
-              <th>Replication</th>
-              <th>B Last Ack</th>
-              <th>L1 Tok</th>
-              <th>Full Tok</th>
-              <th>Policy</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="rows"></tbody>
-        </table>
-        <div class="empty" id="emptyRows">No keys stored yet. Write one using the console on the right.</div>
-      </div>
+  <section class="diagnostics" id="diagnostics" aria-labelledby="diagnostics-title">
+    <div class="section-heading">
+      <div><h2 id="diagnostics-title">Context diagnostics</h2><p>Explore the token budget, archived blocks, and live activity.</p></div>
     </div>
 
-    <div class="side">
-      <!-- Inspect Key -->
-      <div class="panel">
-        <div class="panel-head">
-          <h3>Inspect Key</h3>
-          <span class="sub" id="selKey">select a key from table</span>
+    <section class="stage-grid">
+      <div class="comp" id="comp">
+        <div>
+          <h3>What’s in the prompt</h3>
+          <div class="seg" id="seg"></div>
+          <div class="budget">
+            <div class="fill" id="budgetFill"></div>
+            <div class="cap"></div>
+          </div>
+          <div class="budget-row">
+            <span id="budgetL">0 tokens</span>
+            <span id="budgetR">budget –</span>
+          </div>
         </div>
-        <div class="detail-meta" id="detailMeta"></div>
-        <div class="field">
-          <button class="btn ghost" id="btnValue" disabled>Read Local Value</button>
-          <button class="btn" id="btnHydrate" disabled>Hydrate Context</button>
-          <button class="btn ghost" id="btnView" disabled>View L1</button>
-          <button class="btn danger" id="btnDelete" disabled>Delete</button>
-        </div>
-        <div class="field">
-          <button class="btn ghost" id="btnPin" disabled>Pin</button>
-          <label class="prio">priority <input type="number" id="prio" min="-100" max="100" value="0" disabled></label>
-          <button class="btn ghost" id="btnPrio" disabled>Set</button>
-        </div>
-        <pre class="out" id="detailOut">—</pre>
+        <div class="legend" id="legend"></div>
       </div>
-
-      <!-- Write Key -->
-      <div class="panel">
-        <div class="panel-head">
-          <h3>Ingest Observation / Write Key</h3>
-        </div>
-        <div class="field"><input id="putKey" placeholder="key, e.g. db/schema or tool/output" autocomplete="off"></div>
-        <div class="field"><textarea id="putText" placeholder="Observation full text (e.g. tool output, database schema, scrape)..."></textarea></div>
-        <div class="field"><button class="btn" id="btnPut">PUT /key · Save &amp; Replicate</button></div>
+      <div class="viz" id="viz">
+        <svg id="iso" role="img" aria-label="Isometric view of L1 window and L2 archive"></svg>
       </div>
+    </section>
 
-      <!-- Archive Search -->
+    <section class="timeline">
       <div class="panel">
         <div class="panel-head">
-          <h3>Search Archive</h3>
+          <h3>
+            Prompt usage over time
+            <span class="sub" id="tlSub"></span>
+          </h3>
+          <span class="tabs" role="group" aria-label="Chart view">
+            <button class="tab on" data-tab="live" aria-pressed="true" aria-controls="tlLive">Live</button>
+            <button class="tab" data-tab="replay" aria-pressed="false" aria-controls="tlReplay">Benchmark replay</button>
+          </span>
         </div>
-        <div class="field">
-          <input id="q" placeholder="Search keys + Node B FTS5 archive..." autocomplete="off">
-          <button class="btn" id="btnSearch">Search</button>
+        <div id="tlLive">
+          <svg id="liveChart" class="chart" role="img" aria-label="Window tokens over time"></svg>
+          <div class="chart-legend">
+            <span><i style="background:var(--c1)"></i>window tokens</span>
+            <span><i style="background:var(--bad);height:1px"></i>budget</span>
+            <span><i style="background:var(--warn);width:3px;height:10px"></i>page fault</span>
+            <span><i style="background:var(--spill);height:8px;opacity:.6"></i>dirty / spilled keys</span>
+          </div>
         </div>
-        <div class="res-list" id="results"></div>
+        <div id="tlReplay" hidden>
+          <div class="replay-ctl">
+            <button class="btn" id="btnPlay">Play</button>
+            <input type="range" id="replaySlider" min="1" max="100" value="100" aria-label="Benchmark turn">
+            <span class="replay-info" id="replayInfo"></span>
+          </div>
+          <svg id="replayChart" class="chart" role="img" aria-label="Benchmark replay"></svg>
+          <div class="chart-legend">
+            <span><i style="background:#f43f5e"></i>baseline agent (no pager)</span>
+            <span><i style="background:var(--c1)"></i>PagerKV prompt</span>
+            <span><i style="background:var(--bad);height:1px"></i>budget</span>
+            <span><i style="background:rgba(244,63,94,.25);height:10px"></i>Node B down</span>
+            <span><i style="background:var(--spill);height:8px;opacity:.6"></i>spilled keys</span>
+          </div>
+        </div>
       </div>
+    </section>
 
-      <!-- Live Rendered Prompt -->
+    <div class="evidence-grid">
+
       <div class="panel">
         <div class="panel-head">
-          <h3>Rendered Agent Prompt</h3>
+          <h3>Current prompt</h3>
           <span class="sub" id="promptTok"></span>
         </div>
         <pre class="out" id="prompt">—</pre>
       </div>
 
-      <!-- Event Stream -->
       <div class="panel">
         <div class="panel-head">
-          <h3>Live Event Stream</h3>
+          <h3>Recent events</h3>
           <span class="sub" id="logCount"></span>
         </div>
         <div class="log" id="log"><div><time></time><span style="color:var(--text-dim)">waiting for changes…</span></div></div>
       </div>
     </div>
   </section>
-
-</div>
+</main>
 
 <div class="tip" id="tip"></div>
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" role="status"></div>
 
 <script>
 (() => {
@@ -737,7 +844,7 @@ pre.out{
 
   let requestSequence = 0, currentRequest = null, selectedCopy = null, pairTask = null;
   let demo = null, demoBusy = false;
-  const demoSteps = ["PUT & copy", "Fail B & update", "Read from A", "Recover copy", "Page & hydrate"];
+  const demoSteps = ["Save and copy", "Simulate outage", "Read locally", "Recover replica", "Page and restore"];
   const shortValue = value => {
     const text = String(value ?? "");
     return text.length > 280 ? text.slice(0, 280) + `… [preview of ${text.length.toLocaleString()} characters]` : text;
@@ -787,7 +894,8 @@ pre.out{
       const result = await api("/key", {method: "PUT", body: JSON.stringify(body)});
       finishRequest(request, result);
       if (result.ok) {
-        selected = key;
+        select(key);
+        hideDetailOutput();
         const copied = result.body.replicated;
         transfer(copied ? "ok" : "bad", `${key} v${result.body.version} — ${copied ? "B acknowledged the full copy. Context paging is a separate decision." : "saved on A; B did not acknowledge the copy. Background retry remains pending."}`);
       } else transfer("bad", `${key} — ${result.status ? "HTTP " + result.status : "connection failed; write outcome unknown"}.`);
@@ -838,8 +946,8 @@ pre.out{
       $("copyPair").hidden = false;
       if (!result.ok) {
         selectedCopy = null;
-        $("pairKey").textContent = key;
         $("pairComparison").textContent = "Replication: unknown · comparison unavailable";
+        $("pairContext").textContent = "";
         $("pairAVersion").textContent = "Not verified";
         $("pairAValue").textContent = "Could not check the current local value.";
         $("pairBVersion").textContent = "Not verified";
@@ -857,14 +965,13 @@ pre.out{
   }
 
   function renderCopyPair(pair) {
-    $("pairKey").textContent = pair.key;
     const labels = {in_sync: "in sync", pending: "pending", diverged: "diverged", unknown: "unknown"};
     const pending = pair.node_a && pair.node_a.acked_version !== pair.node_a.version;
     $("pairComparison").textContent = `Replication: ${labels[pair.comparison_status] || "unknown"}${pending ? " · 1 pending update" : ""}`;
     $("pairContext").textContent = `Context: ${pair.node_a ? contextLabel(pair.node_a.residence) : "not present"}`;
-    $("pairAVersion").textContent = pair.node_a ? `${pair.key} · v${pair.node_a.version}` : "Key missing on A";
+    $("pairAVersion").textContent = pair.node_a ? `v${pair.node_a.version}` : "Key missing";
     $("pairAValue").textContent = pair.node_a?.value == null ? "Full local value unavailable" : shortValue(pair.node_a.value);
-    $("pairBVersion").textContent = pair.node_b ? `${pair.key} · v${pair.node_b.version}` : pair.node_b_state === "missing" ? "No replica for this key" : "B unavailable · copy not verified";
+    $("pairBVersion").textContent = pair.node_b ? `v${pair.node_b.version}` : pair.node_b_state === "missing" ? "No replica" : "B unavailable";
     $("pairBValue").textContent = pair.node_b ? shortValue(pair.node_b.value) : pair.node_b_state === "missing" ? "B responded: key not found." : "Current contents are unknown. A past acknowledgment is not a live comparison.";
   }
 
@@ -916,7 +1023,7 @@ pre.out{
         demo = {step: 0, prefix, key: prefix + "_observation", keys: new Set(), budget: current.max_window_tokens, tookDown: false};
       }
       const key = demo.key;
-      selected = key;
+      select(key);
       if (demo.step === 0) {
         const value = "Observation: the billing service reads the orders table. " + "Keep the full database schema and request trace so the agent can retrieve the exact context later. ".repeat(6);
         demo.value = value;
@@ -937,7 +1044,6 @@ pre.out{
       } else if (demo.step === 2) {
         const result = requireOk(await observedRead(key), "Reading A during outage");
         if (result.value !== demo.value) throw new Error("Node A did not return the expected complete value.");
-        $("detailOut").textContent = result.value;
         $("demoProof").textContent = `Step 3 verified: GET /key/{key} returned the complete updated v${result.version} value from A's LOCAL_STORE while B was unavailable.`;
       } else if (demo.step === 3) {
         await demoFault("none");
@@ -961,7 +1067,7 @@ pre.out{
           else paged = [...demo.keys].find(k => snapshot.keys[k]?.residence === "PAGED_TO_NODE_B") || null;
         }
         if (!paged) throw new Error("No sample block paged at this budget. Use a smaller context budget and retry; no paging result was simulated.");
-        selected = paged;
+        select(paged);
         const local = requireOk(await observedRead(paged), "Reading a paged value locally");
         demo.pagedKey = paged; demo.pagedValue = local.value; demo.pageReady = true;
         transfer("idle", `${paged} — context is now a stub; the complete value still exists on both nodes. Paging did not move or delete the stored value.`);
@@ -969,10 +1075,9 @@ pre.out{
         await poll(true); loadPrompt(); await loadCopyPair(true);
         return;
       } else {
-        selected = demo.pagedKey;
+        select(demo.pagedKey);
         const hydrated = requireOk(await observedRead(demo.pagedKey, true), "Hydrating from B");
         if (hydrated.source !== "L2_PAGE_FAULT" || hydrated.full_text !== demo.pagedValue) throw new Error("The archive hydration did not return the exact local value.");
-        $("detailOut").textContent = hydrated.full_text;
         $("demoProof").textContent = "Step 5 verified: an acknowledged full value became a context stub, stayed readable locally, and hydrated exactly from B. Replication copies data; paging changes the active prompt. Sample keys remain until reset.";
       }
       demo.step++;
@@ -992,7 +1097,7 @@ pre.out{
         requireOk(await api(`/key/${enc(key)}`, {method: "DELETE"}), "Removing sample key");
         demo.keys.delete(key);
       }
-      if (selected?.startsWith(demo.prefix + "_")) { selected = null; selectedCopy = null; $("copyPair").hidden = true; }
+      if (selected?.startsWith(demo.prefix + "_")) select(null);
       demo = null;
       $("demoProof").textContent = "Demo reset. B was restored if this demo took it down, and only the generated sample keys were removed.";
       await poll(true); loadPrompt();
@@ -1024,7 +1129,6 @@ pre.out{
       const pendingCount = c.ok ? c.body.keys.dirty + c.body.keys.pending + c.body.pending_deletes : (Object.values(s.body.keys).filter(k => k.acked_version !== k.version).length + (s.body.pending_deletes || 0));
       $("comparisonChip").textContent = (names[comparison] || "unknown") + (pendingCount ? ` · ${pendingCount} pending` : "");
       $("comparisonChip").style.color = comparison === "in_sync" ? "var(--ok)" : comparison === "pending" ? "var(--warn)" : "var(--bad)";
-      $("backingCount").textContent = `${s.body.local_value_count || 0} full values retained locally.`;
       $("dotLive").className = "dot ok"; $("liveTxt").textContent = "live · " + new Date().toLocaleTimeString();
       $("banner").style.display = "none";
       const bUp = !!(h.body && (h.body.node_b_ready ?? h.body.node_b_reachable));
@@ -1039,11 +1143,15 @@ pre.out{
       if (document.activeElement !== $("faultSel")) $("faultSel").value = faultMode;
       const bState = faultMode === "down" ? "bad" : faultMode === "slow" ? "warn" : bUp ? "ok" : "bad";
       $("dotB").className = "dot " + bState;
+      $("pillB").textContent = bState === "ok" ? "Online" : bState === "warn" ? "Simulated slow" : f.ok && faultMode === "down" ? "Simulated outage" : "Unavailable";
       if (s.ok) {
         if (status) diffEvents(status, s.body);
         observeReplication(status, s.body);
+        const selectionRemoved = selected && Object.hasOwn(status?.keys || {}, selected)
+          && !Object.hasOwn(s.body.keys, selected);
         status = s.body;
-        if (!selected && status.last_replication && status.keys[status.last_replication.key]) selected = status.last_replication.key;
+        if (selectionRemoved) select(null);
+        if (!selected && status.last_replication && Object.hasOwn(status.keys, status.last_replication.key)) selected = status.last_replication.key;
         sample(status);
         render();
         renderReplicationResult(s.body.last_replication);
@@ -1053,6 +1161,8 @@ pre.out{
       $("dotLive").className = "dot bad"; $("liveTxt").textContent = "disconnected";
       $("dotA").className = "dot bad"; $("pillA").textContent = "Offline";
       $("dotB").className = "dot";
+      $("pillB").textContent = "Unknown";
+      $("comparisonChip").style.color = "var(--bad)";
       $("comparisonChip").textContent = "unknown · stale snapshot";
       $("transferCounts").textContent = "Status unavailable · last snapshot may be stale";
       if (!activeWrite) transfer("bad", "Node status unavailable. Check that both services are running.");
@@ -1119,20 +1229,18 @@ pre.out{
     const dirty = keys.filter(([, k]) => classify(k).dirty || classify(k).pending);
     const archived = keys.filter(([, k]) => k.acked_version > 0);
 
-    $("pillWin").textContent = `${fmt(s.active_window_tokens)} / ${fmt(s.max_window_tokens)}`;
-    $("pillKeys").textContent = `${resident.length} in L1` + (spilled.length ? ` · ${spilled.length} spilled` : "") + ` · ${paged.length} paged`;
 
-    $("sWin").innerHTML = `${fmt(s.active_window_tokens)}<small>tok</small>`;
+    $("sWin").innerHTML = `${fmt(s.active_window_tokens)}<small>tokens</small>`;
     const pct = s.max_window_tokens ? (s.active_window_tokens / s.max_window_tokens * 100) : 0;
     const wc = $("sWinChip");
     wc.className = "chip " + (s.over_budget ? "bad" : pct > 90 ? "warn" : "ok");
-    wc.textContent = s.over_budget ? `over budget · ${pct.toFixed(0)}%` : `${pct.toFixed(1)}% of budget`;
+    wc.textContent = s.over_budget ? `over budget · ${pct.toFixed(0)}%` : `${pct.toFixed(1)}% of ${fmt(s.max_window_tokens)} tokens`;
     $("sPf").textContent = fmt(s.page_faults);
-    $("sSaved").innerHTML = `${fmt(s.tokens_saved_by_replication)}<small>tok</small>`;
+    $("sSaved").innerHTML = `${fmt(s.tokens_saved_by_replication)}<small>tokens</small>`;
     $("sDirty").textContent = fmt(dirty.length);
     const dc = $("sDirtyChip");
     dc.className = "chip " + (dirty.length ? "warn" : "mut");
-    dc.textContent = !dirty.length ? "all replicated"
+    dc.textContent = !dirty.length ? "No keys waiting"
       : spilled.length ? `${spilled.length} spilled to local disk` : "awaiting Node B";
 
     renderComposition(s, keys);
@@ -1161,7 +1269,7 @@ pre.out{
     const total = parts.reduce((a, p) => a + p.v, 0) || 1;
     $("seg").innerHTML = parts.map(p => {
       const pc = p.v / total * 100;
-      return `<div style="flex:0 0 ${pc}%;background:${p.color};color:#000">
+      return `<div style="flex:0 0 ${pc}%;background:${p.color};color:#fff">
         <div class="pct">${pc >= 8 ? pc.toFixed(0) + "%" : ""}</div>
         <div class="bars" style="opacity:${p.v ? 1 : 0}"></div></div>`;
     }).join("");
@@ -1184,65 +1292,74 @@ pre.out{
   }
 
   function renderIso(resident, paged) {
-    const svg = $("iso"), box = svg.getBoundingClientRect();
-    const W = box.width || 800, H = box.height || 480;
+    const svg = $("iso");
+    const W = svg.getBoundingClientRect().width || 800;
+    const sideBySide = W >= 650;
+    const most = Math.max(resident.length, paged.length);
+    const N = Math.min(12, Math.max(2, Math.ceil(Math.sqrt(most))));
+    const floorWidth = sideBySide ? (W - 120) / 2 : W - 64;
+    const cell = Math.min(76, floorWidth / (2 * N * 0.866), (sideBySide ? 310 : 235) / (N + 2));
+    const wallH = cell * 1.8;
+    const floorHeight = Math.ceil(22 + wallH + (N + 0.24) * cell + 56);
+    const H = sideBySide ? floorHeight : floorHeight * 2;
     svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
     svg.innerHTML = `<defs>
-      <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#38bdf8" stop-opacity=".03"/><stop offset="1" stop-color="#38bdf8" stop-opacity=".12"/></linearGradient>
+      <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#d6ad47" stop-opacity=".03"/><stop offset="1" stop-color="#d6ad47" stop-opacity=".12"/></linearGradient>
       <linearGradient id="glassBad" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f43f5e" stop-opacity=".03"/><stop offset="1" stop-color="#f43f5e" stop-opacity=".14"/></linearGradient>
       <filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
     </defs>`;
 
-    const most = Math.max(resident.length, paged.length);
-    const N = Math.min(12, Math.max(6, Math.ceil(Math.sqrt(most))));
-    const cellByH = (H - 50) / (2 * N + 7.5);
-    const cellByW = (W - 80) / (2 * N * 0.866);
-    const cell = Math.max(10, Math.min(32, cellByH, cellByW));
-    const halfW = N * cell * 0.866, wallH = cell * 3.0, gap = cell * 2.4;
-    const cx = W / 2;
-    const top0 = 16 + wallH;
-    const iso = (gx, gy, z, oy) => [cx + (gx - gy) * cell * 0.866, oy + (gx + gy) * cell * 0.5 - z];
-
     const bDown = faultMode === "down" || $("dotB").classList.contains("bad");
+    const top = 22 + wallH;
+    const cxA = sideBySide ? W / 4 - 12 : W / 2 - 9;
     const floors = [
-      { name: "L1 · NODE A · ACTIVE CONTEXT", items: resident, oy: top0, bad: false, l1: true },
-      { name: "L2 · NODE B · ARCHIVE" + (bDown ? " · OFFLINE" : ""), items: paged, oy: top0 + N * cell + gap + wallH * 0.6, bad: bDown, l1: false },
+      { name: "NODE A · ACTIVE CONTEXT", items: resident, x: cxA, y: top, bad: false, l1: true },
+      { name: "NODE B · ARCHIVE" + (bDown ? " · OFFLINE" : ""), items: paged,
+        x: sideBySide ? W - cxA : cxA, y: sideBySide ? top : top + floorHeight, bad: bDown, l1: false },
     ];
-    const maxTok = Math.max(1, ...[...resident, ...paged].map(([, k]) => k.full_tokens_on_node_b || k.active_tokens_in_node_a || 1));
+    const maxTok = [...resident, ...paged].reduce(
+      (max, [, k]) => Math.max(max, k.full_tokens_on_node_b || 0, k.active_tokens_in_node_a || 0), 1
+    );
 
     // replication link
-    const a = iso(N, 0, 0, floors[0].oy), b = iso(N, 0, 0, floors[1].oy);
+    const halfWidth = N * cell * 0.866;
+    const a = [cxA + halfWidth + 9, top + N * cell * 0.5];
+    const b = [floors[1].x + (sideBySide ? -halfWidth - 9 : halfWidth + 9), floors[1].y + N * cell * 0.5];
+    const linkColor = bDown ? "#b52342" : "#9a782d";
     const link = document.createElementNS(NS, "path");
-    const linkPath = `M${a[0]+10},${a[1]} h20 V${b[1]} h-20`;
+    const linkPath = sideBySide
+      ? `M${a[0]},${a[1]} H${b[0]}`
+      : `M${a[0]},${a[1]} H${W - 12} V${b[1]} H${b[0]}`;
     link.setAttribute("d", linkPath);
-    link.setAttribute("fill", "none"); link.setAttribute("stroke", bDown ? "#f43f5e" : "#38bdf8");
-    link.setAttribute("stroke-opacity", ".55"); if (bDown) link.setAttribute("stroke-dasharray", "4 4");
+    link.setAttribute("fill", "none"); link.setAttribute("stroke", linkColor);
+    link.setAttribute("stroke-width", "1.5"); if (bDown) link.setAttribute("stroke-dasharray", "4 4");
     svg.appendChild(link);
-    for (const [x, y] of [[a[0] + 10, a[1]], [b[0] + 10, b[1]]]) {
+    for (const [x, y] of [a, b]) {
       const c = document.createElementNS(NS, "circle");
       c.setAttribute("cx", x); c.setAttribute("cy", y); c.setAttribute("r", 3.5);
-      c.setAttribute("fill", bDown ? "#f43f5e" : "#38bdf8"); svg.appendChild(c);
+      c.setAttribute("fill", linkColor); svg.appendChild(c);
     }
-    if (W - a[0] > 140) {
+    if (sideBySide) {
       const mid = document.createElementNS(NS, "text");
-      mid.setAttribute("x", a[0] + 36); mid.setAttribute("y", (a[1] + b[1]) / 2 + 4);
-      mid.setAttribute("class", "floor-label"); if (bDown) mid.setAttribute("fill", "#fda4af");
-      mid.textContent = bDown ? "paused" : "replicate ↓ hydrate ↑";
+      mid.setAttribute("x", W / 2); mid.setAttribute("y", a[1] - 10);
+      mid.setAttribute("text-anchor", "middle");
+      mid.setAttribute("class", "link-label" + (bDown ? " offline" : ""));
+      mid.textContent = bDown ? "Paused" : "Replication";
       svg.appendChild(mid);
     }
 
-    for (const f of [...floors].reverse()) {
-      const oy = f.oy, g = document.createElementNS(NS, "g");
-      const P = (x, y, z) => iso(x, y, z, oy);
-      const stroke = f.bad ? "#f43f5e" : "#38bdf8", fill = f.bad ? "url(#glassBad)" : "url(#glass)";
-      const th = cell * 0.35;
+    for (const f of floors) {
+      const g = document.createElementNS(NS, "g");
+      const P = (x, y, z) => [f.x + (x - y) * cell * 0.866, f.y + (x + y) * cell * 0.5 - z];
+      const stroke = f.bad ? "#e18799" : "#c9ae64", fill = f.bad ? "url(#glassBad)" : "url(#glass)";
+      const th = cell * 0.24;
       // back walls
       g.appendChild(poly([P(0,0,0), P(N,0,0), P(N,0,wallH), P(0,0,wallH)], { fill, stroke, "stroke-opacity": ".2" }));
       g.appendChild(poly([P(0,0,0), P(0,N,0), P(0,N,wallH), P(0,0,wallH)], { fill, stroke, "stroke-opacity": ".2" }));
       // floor plate
-      g.appendChild(poly([P(0,N,0), P(N,N,0), P(N,N,-th), P(0,N,-th)], { fill: f.bad ? "rgba(244,63,94,.10)" : "rgba(56,189,248,.08)", stroke, "stroke-opacity": ".35" }));
-      g.appendChild(poly([P(N,0,0), P(N,N,0), P(N,N,-th), P(N,0,-th)], { fill: f.bad ? "rgba(244,63,94,.06)" : "rgba(56,189,248,.05)", stroke, "stroke-opacity": ".35" }));
-      g.appendChild(poly([P(0,0,0), P(N,0,0), P(N,N,0), P(0,N,0)], { fill: f.bad ? "rgba(60,20,30,.6)" : "rgba(15,23,42,.65)", stroke, "stroke-opacity": ".45" }));
+      g.appendChild(poly([P(0,N,0), P(N,N,0), P(N,N,-th), P(0,N,-th)], { fill: f.bad ? "rgba(244,63,94,.10)" : "rgba(213,169,55,.08)", stroke, "stroke-opacity": ".35" }));
+      g.appendChild(poly([P(N,0,0), P(N,N,0), P(N,N,-th), P(N,0,-th)], { fill: f.bad ? "rgba(244,63,94,.06)" : "rgba(213,169,55,.05)", stroke, "stroke-opacity": ".35" }));
+      g.appendChild(poly([P(0,0,0), P(N,0,0), P(N,N,0), P(0,N,0)], { fill: f.bad ? "#fceef0" : "#f7edce", stroke, "stroke-opacity": ".45" }));
       for (let i = 1; i < N; i++) {
         for (const [p1, p2] of [[P(i,0,0), P(i,N,0)], [P(0,i,0), P(N,i,0)]]) {
           const l = document.createElementNS(NS, "line");
@@ -1252,23 +1369,26 @@ pre.out{
       }
       // blocks
       const cap = N * N, items = f.items.slice(0, cap);
+      let selectedLabel = "";
       items.forEach(([key, k], i) => {
         const gx = i % N, gy = Math.floor(i / N);
         const c = classify(k);
         const isStub = f.l1 && (c.spilled || k.residence === "PAGED_TO_NODE_B");
         const tok = f.l1 ? (k.active_tokens_in_node_a || 1) : (k.full_tokens_on_node_b || 1);
-        const h = cell * (0.35 + 2.4 * Math.sqrt(tok / maxTok)) * (isStub ? 0.45 : 1);
-        const pad = 0.14, x0 = gx + pad, x1 = gx + 1 - pad, y0 = gy + pad, y1 = gy + 1 - pad;
-        const base = f.bad ? [244,63,94] : c.spilled ? [168,85,247] : c.dirty ? [245,158,11] : c.pending ? [226,232,240] : f.l1 ? [56,189,248] : [2,132,199];
-        const fade = isStub ? 0.55 : 1;
-        const rgb = (m, al) => `rgba(${base.map(v => Math.round(v * m)).join(",")},${al * fade})`;
+        const scale = Math.sqrt(tok / maxTok);
+        const h = cell * (isStub ? 0.3 + 0.22 * scale : 0.74 + 0.86 * scale);
+        const pad = 0.10, x0 = gx + pad, x1 = gx + 1 - pad, y0 = gy + pad, y1 = gy + 1 - pad;
+        const base = f.bad ? [191,74,102] : f.l1 && c.spilled ? [143,99,209]
+          : f.l1 && c.dirty ? [229,145,35] : f.l1 && c.pending ? [144,135,112]
+          : f.l1 && isStub ? [224,193,116] : f.l1 ? [244,189,56] : [103,101,93];
+        const tone = factor => `rgb(${base.map(value => Math.round(value * factor)).join(",")})`;
+        const face = factor => ({fill: tone(factor), stroke: tone(.67), "stroke-width": ".85"});
         const blk = document.createElementNS(NS, "g");
         blk.setAttribute("class", "blk" + (key === selected ? " sel" : ""));
-        if (c.dirty && !c.spilled) blk.setAttribute("filter", "url(#glow)");
         if (isStub) blk.setAttribute("stroke-dasharray", "3 2");
-        blk.appendChild(poly([P(x0,y1,0), P(x1,y1,0), P(x1,y1,h), P(x0,y1,h)], { fill: rgb(.55, .55), stroke: rgb(1, .5), "stroke-width": ".6" }));
-        blk.appendChild(poly([P(x1,y0,0), P(x1,y1,0), P(x1,y1,h), P(x1,y0,h)], { fill: rgb(.38, .55), stroke: rgb(1, .5), "stroke-width": ".6" }));
-        blk.appendChild(poly([P(x0,y0,h), P(x1,y0,h), P(x1,y1,h), P(x0,y1,h)], { fill: rgb(1, .75), stroke: rgb(1, .9), "stroke-width": ".6" }));
+        blk.appendChild(poly([P(x0,y1,0), P(x1,y1,0), P(x1,y1,h), P(x0,y1,h)], face(.82)));
+        blk.appendChild(poly([P(x1,y0,0), P(x1,y1,0), P(x1,y1,h), P(x1,y0,h)], face(.67)));
+        blk.appendChild(poly([P(x0,y0,h), P(x1,y0,h), P(x1,y1,h), P(x0,y1,h)], face(1)));
         const title = document.createElementNS(NS, "title");
         title.textContent = f.l1 ? `${key} · current v${k.version}` : `${key} · archived v${k.acked_version}${k.acked_version !== k.version ? ` · awaiting v${k.version}` : " · acknowledged copy"}`;
         blk.appendChild(title);
@@ -1277,22 +1397,24 @@ pre.out{
         blk.addEventListener("click", () => select(key));
         g.appendChild(blk);
         if (key === selected) {
-          const labelPoint = P(gx + .5, gy + .5, h + 10);
-          const label = document.createElementNS(NS, "text");
-          label.setAttribute("x", labelPoint[0]); label.setAttribute("y", labelPoint[1]);
-          label.setAttribute("text-anchor", "middle"); label.setAttribute("class", "block-label");
           const actual = selectedCopy?.key === key ? selectedCopy.node_b?.version : null;
           const version = f.l1 ? k.version : actual ?? k.acked_version;
-          label.textContent = `${key.length > 22 ? key.slice(0, 19) + "…" : key} · ${!f.l1 && actual == null ? "last ack " : ""}v${version}`;
-          g.appendChild(label);
+          selectedLabel = `${key.length > 22 ? key.slice(0, 19) + "…" : key} · ${!f.l1 && actual == null ? "last ack " : ""}v${version}`;
         }
       });
       // floor label
       const lp = P(N, N, -th), t = document.createElementNS(NS, "text");
       t.setAttribute("x", lp[0]); t.setAttribute("y", lp[1] + 20); t.setAttribute("text-anchor", "middle");
-      t.setAttribute("class", "floor-label"); if (f.bad) t.setAttribute("fill", "#fda4af");
+      t.setAttribute("class", "floor-label" + (f.bad ? " offline" : ""));
       t.textContent = `${f.name} · ${f.items.length}` + (f.items.length > cap ? ` (${cap} shown)` : "");
       g.appendChild(t);
+      if (selectedLabel) {
+        const label = document.createElementNS(NS, "text");
+        label.setAttribute("x", lp[0]); label.setAttribute("y", lp[1] + 39);
+        label.setAttribute("text-anchor", "middle"); label.setAttribute("class", "block-label");
+        label.textContent = selectedLabel;
+        g.appendChild(label);
+      }
       svg.appendChild(g);
     }
     const ongoing = transferState === "pending" || transferState === "hydrate";
@@ -1330,33 +1452,40 @@ pre.out{
 
   // ------------------------------------------------------------ table + detail
   function tagRes(r) {
-    if (r === "RESIDENT_FULL") return `<span class="tag res">resident</span>`;
-    if (r === "SPILLED_LOCAL") return `<span class="tag spill">spilled</span>`;
-    return `<span class="tag pg">paged</span>`;
+    if (r === "RESIDENT_FULL") return `<span class="tag res">Full text</span>`;
+    if (r === "SPILLED_LOCAL") return `<span class="tag spill">Local summary</span>`;
+    return `<span class="tag pg">Summary</span>`;
   }
   function tagCon(c) {
-    if (c === "SYNCED_ARCHIVED") return `<span class="tag ok">synced</span>`;
-    if (c === "DIRTY_UNREPLICATED") return `<span class="tag dirty">dirty</span>`;
-    return `<span class="tag pend">${esc(c.toLowerCase().replace(/_/g, " "))}</span>`;
+    if (c === "SYNCED_ARCHIVED") return `<span class="tag ok">Copied</span>`;
+    if (c === "DIRTY_UNREPLICATED") return `<span class="tag dirty">Retry pending</span>`;
+    return `<span class="tag pend">Copying</span>`;
   }
 
+  let tableMarkup;
   function renderTable(keys) {
     $("keyCount").textContent = `${keys.length} total`;
     $("emptyRows").style.display = keys.length ? "none" : "block";
-    $("rows").innerHTML = keys.map(([key, k]) => `
+    const nextMarkup = keys.map(([key, k]) => `
       <tr class="row${key === selected ? " sel" : ""}" data-key="${esc(key)}">
-        <td class="key" title="${esc(key)}">${esc(key)}</td>
+        <td class="key"><button class="key-link" title="${esc(key)}" aria-pressed="${key === selected}">${esc(key)}</button></td>
         <td>v${k.version}</td>
         <td>${tagRes(k.residence)}</td>
         <td>${tagCon(k.consistency_status)}</td>
-        <td>${k.acked_version ? "v" + k.acked_version : "none"}</td>
-        <td>${fmt(k.active_tokens_in_node_a)}</td>
-        <td>${fmt(k.full_tokens_on_node_b)}</td>
-        <td>${k.pinned ? `<span class="tag pin">pinned</span> ` : ""}${k.priority ? `<span class="mono" style="color:var(--text-muted)">p${k.priority}</span>` : ""}</td>
-        <td>${k.eviction_allowed || k.residence !== "RESIDENT_FULL" ? "" : `<span class="lock" title="${esc(k.replication_error || "not evictable until acked")}">●</span>`}</td>
       </tr>`).join("");
+    if (tableMarkup === nextMarkup) return;
+    const focusedKey = document.activeElement?.closest?.("tr.row")?.dataset.key;
+    $("rows").innerHTML = nextMarkup;
+    tableMarkup = nextMarkup;
+    if (focusedKey) {
+      const row = Array.from($("rows").children).find(item => item.dataset.key === focusedKey);
+      row?.querySelector("button")?.focus({preventScroll:true});
+    }
   }
-  $("rows").addEventListener("click", e => { const tr = e.target.closest("tr.row"); if (tr) select(tr.dataset.key); });
+  $("rows").addEventListener("click", e => {
+    const row = e.target.closest("tr.row");
+    if (row) selectForInspection(row.dataset.key);
+  });
 
   function renderDetailMeta() {
     const k = selected && status && status.keys[selected];
@@ -1365,32 +1494,56 @@ pre.out{
       $("btnPin").textContent = k.pinned ? "Unpin" : "Pin";
       if (document.activeElement !== $("prio")) $("prio").value = k.priority ?? 0;
     }
-    if (!k) { $("detailMeta").innerHTML = ""; $("selKey").textContent = selected ? "deleted" : "select a key from table"; return; }
+    if (!k) { $("detailMeta").innerHTML = ""; $("selKey").textContent = selected ? "deleted" : "Choose a key to inspect"; return; }
     $("selKey").textContent = selected;
     $("detailMeta").innerHTML = `
-      <span>version:</span><b>${k.version}</b>
-      <span>residence:</span><b>${esc(k.residence)}</b>
-      <span>consistency:</span><b>${esc(k.consistency_status)}</b>
-      <span>evictable:</span><b>${k.eviction_allowed ? "yes" : "no"}</b>
-      <span>policy:</span><b>${k.pinned ? "pinned" : "not pinned"} · p${k.priority ?? 0}</b>
-      ${k.replication_error ? `<span>last error:</span><b style="color:var(--bad)">${esc(k.replication_error)}</b>` : ""}`;
+      <span class="version">v${k.version}</span>
+      ${tagRes(k.residence)}
+      ${tagCon(k.consistency_status)}
+      ${k.pinned ? '<span class="tag pin">Pinned</span>' : ""}`;
+  }
+
+  function showDetailOutput(label, text) {
+    $("detailLabel").textContent = label;
+    $("detailOut").textContent = text || "(empty)";
+    $("detailResult").hidden = false;
+  }
+
+  function hideDetailOutput() {
+    $("detailResult").hidden = true;
+    $("detailOut").textContent = "—";
   }
 
   async function peek(key) {
+    if (!key) return;
     const r = await api(`/context/${enc(key)}?peek=true`);
     if (key !== selected) return;
-    $("detailOut").textContent = r.ok ? r.body.content : `HTTP ${r.status}\n` + JSON.stringify(r.body, null, 2);
+    showDetailOutput("Prompt block", r.ok ? r.body.content : `Could not load the prompt block (HTTP ${r.status || "unavailable"}).`);
   }
 
   function select(key) {
+    if (selected === key) return;
     selected = key;
+    selectedCopy = null;
+    $("copyPair").hidden = true;
+    $("copyPair").open = false;
+    hideDetailOutput();
     if (status) render();
-    $("detailOut").textContent = "loading…";
-    peek(key);
     loadCopyPair();
   }
 
+  function selectForInspection(key) {
+    select(key);
+    const inspector = $("inspect-key");
+    const bounds = inspector.getBoundingClientRect();
+    if (bounds.top < 72 || bounds.top + 120 > innerHeight) {
+      inspector.scrollIntoView({block:"start"});
+      $("inspect-title").focus({preventScroll:true});
+    }
+  }
+
   $("btnView").onclick = () => peek(selected);
+  $("btnHideDetail").onclick = hideDetailOutput;
 
   async function patchPolicy(body) {
     const r = await api(`/context/${enc(selected)}`, { method: "PATCH", body: JSON.stringify(body) });
@@ -1403,25 +1556,30 @@ pre.out{
     patchPolicy({ priority: v });
   };
   $("btnValue").onclick = async () => {
-    if (!selected) return;
-    const result = await observedRead(selected);
-    $("detailOut").textContent = result.ok ? result.body.value : `HTTP ${result.status}\n` + JSON.stringify(result.body, null, 2);
-    toast(result.ok ? `${selected}: full value from Node A's local store` : "Local value unavailable", !result.ok);
+    const key = selected;
+    if (!key) return;
+    const result = await observedRead(key);
+    if (key !== selected) return;
+    showDetailOutput("Full value", result.ok ? result.body.value : `Could not read the value (HTTP ${result.status || "unavailable"}).`);
+    toast(result.ok ? `${key}: full value from Node A` : "Local value unavailable", !result.ok);
   };
   $("btnHydrate").onclick = async () => {
-    const r = await observedRead(selected, true);
+    const key = selected;
+    if (!key) return;
+    const r = await observedRead(key, true);
+    poll(true); loadPrompt();
+    if (key !== selected) return;
     if (r.ok) {
-      $("detailOut").textContent = r.body.full_text;
+      showDetailOutput("Restored prompt block", r.body.full_text);
       transfer(r.body.source === "L2_PAGE_FAULT" ? "hydrated" : "idle", `${selected} — full context restored via ${r.body.source}.`);
       toast(r.body.source === "L2_PAGE_FAULT" ? `Page fault: ${selected} hydrated from Node B`
         : r.body.source === "L1_SPILL" ? `Page fault: ${selected} restored from Node A's local spill`
         : `${selected} served from L1`);
     } else {
-      $("detailOut").textContent = `HTTP ${r.status}\n` + JSON.stringify(r.body, null, 2);
+      showDetailOutput("Restore failed", r.body?.error || r.body?.detail || "Could not restore this block.");
       transfer("bad", `${selected} — context hydration unavailable; the full value is still readable through GET /key/{key} when locally retained.`);
       toast(r.status === 503 ? "Node B unavailable: returned stub" : `Hydrate failed (${r.status})`, true);
     }
-    poll(); loadPrompt();
   };
   $("btnDelete").onclick = async () => {
     if (!selected) return;
@@ -1432,56 +1590,91 @@ pre.out{
     const result = await api(route, {method: "DELETE"});
     finishRequest(request, result);
     toast(result.ok ? `Deleted ${key}; replica deletion is retried if needed` : `Delete failed (${result.status || "connection error"})`, !result.ok);
-    if (result.ok && selected === key) {
-      selected = null; selectedCopy = null;
-      $("copyPair").hidden = true;
-      $("detailOut").textContent = "—";
-      if (status) renderDetailMeta();
-    }
+    if (result.ok && selected === key) select(null);
     await poll(true); loadPrompt();
   };
 
   $("btnPut").onclick = async () => {
     const key = $("putKey").value.trim(), value = $("putText").value;
-    if (!key) { toast("A key is required", true); return; }
+    const note = $("writeNote");
+    if (!key) {
+      note.textContent = "Enter a key before saving.";
+      note.dataset.error = "true";
+      $("putKey").focus();
+      return;
+    }
+    note.textContent = "Saving and checking the replica…";
+    note.dataset.error = "false";
     $("btnPut").disabled = true;
     try {
       const result = await writeValue(key, value);
-      if (result.ok) { $("putText").value = ""; select(key); toast(`${key} v${result.body.version} · ${result.body.replicated ? "copy acknowledged" : "saved locally · copy pending"}`); }
-      else toast(`PUT failed (${result.status || "connection error"})`, true);
-    } finally { $("btnPut").disabled = false; poll(); loadPrompt(); }
+      if (result.ok) {
+        if ($("putText").value === value && $("putKey").value.trim() === key) $("putText").value = "";
+        select(key);
+        note.textContent = `Saved ${key} (v${result.body.version}). ${result.body.replicated ? "Replica copy confirmed." : "Node B has not confirmed the copy yet. PagerKV will retry."}`;
+      } else {
+        note.dataset.error = "true";
+        const detail = result.body?.detail || result.body?.error;
+        note.textContent = typeof detail === "string" ? detail : `Could not confirm the save (HTTP ${result.status || "unavailable"}).`;
+      }
+    } finally { $("btnPut").disabled = false; poll(true); loadPrompt(); }
   };
 
+  let searchSequence = 0;
   async function search() {
     const q = $("q").value.trim();
-    if (!q) { $("results").innerHTML = ""; return; }
+    const sequence = ++searchSequence;
+    const results = $("results");
+    if (!q) {
+      results.innerHTML = '<p class="search-note">Enter a key name or text to find.</p>';
+      return;
+    }
+    results.innerHTML = '<p class="search-note">Searching…</p>';
     const r = await api(`/context/search?q=${encodeURIComponent(q)}&limit=10`);
-    if (!r.ok) { $("results").innerHTML = `<div style="color:var(--bad);cursor:default">HTTP ${r.status}: ${esc(r.body && r.body.error)}</div>`; return; }
+    if (sequence !== searchSequence) return;
+    if (!r.ok) {
+      const message = r.status === 503 ? "The replica is unavailable and no local matches were found."
+        : "Search is unavailable. Try again.";
+      results.innerHTML = `<p class="search-note">${message}</p>`;
+      return;
+    }
     const res = r.body.results || [];
-    $("results").innerHTML = res.length
-      ? res.map(x => `<div data-key="${esc(x.key)}"><span class="k">${esc(x.key)}</span><span class="mono" style="color:var(--text-muted)">${x.score != null ? Number(x.score).toFixed(2) : ""}</span></div>`).join("")
-      : `<div style="cursor:default;color:var(--text-dim)">no matches</div>`;
+    results.innerHTML = res.length
+      ? res.map(x => `<button type="button" data-key="${esc(x.key)}"><span class="k">${esc(x.key)}</span></button>`).join("")
+      : '<p class="search-note">No matching keys.</p>';
   }
   $("btnSearch").onclick = search;
   $("q").addEventListener("keydown", e => { if (e.key === "Enter") search(); });
-  $("results").addEventListener("click", e => { const d = e.target.closest("[data-key]"); if (d) select(d.dataset.key); });
+  $("results").addEventListener("click", e => {
+    const result = e.target.closest("button[data-key]");
+    if (result) selectForInspection(result.dataset.key);
+  });
 
   async function setFault(mode) {
     return api("/admin/node_b/fault", { method: "POST", body: JSON.stringify({ mode, delay_s: mode === "slow" ? 3 : 0 }) });
   }
   $("faultSel").addEventListener("change", async e => {
-    const mode = e.target.value;
-    let r = await setFault(mode);
-    if (r.status === 403) {
-      const t = prompt("The fault switch needs an admin token (PAGERKV_ADMIN_TOKEN on the nodes):", "");
-      if (t) {
-        adminToken = t.trim();
-        try { localStorage.setItem("pagerkv.adminToken", adminToken); } catch { /* not persisted */ }
-        r = await setFault(mode);
+    const control = e.target;
+    const mode = control.value;
+    control.disabled = true;
+    try {
+      let result = await setFault(mode);
+      if (result.status === 403) {
+        const supplied = prompt("Enter PAGERKV_ADMIN_TOKEN configured on both nodes:", "");
+        if (supplied) {
+          adminToken = supplied.trim();
+          result = await setFault(mode);
+          if (result.ok) {
+            try { localStorage.setItem("pagerkv.adminToken", adminToken); } catch { /* storage unavailable */ }
+          }
+        }
       }
+      control.value = result.ok ? result.body.mode : faultMode;
+      toast(result.ok ? "Replica simulation updated" : result.status === 403 ? "Admin token required" : "Could not change the replica simulation", !result.ok);
+      await poll(true);
+    } finally {
+      control.disabled = false;
     }
-    toast(r.ok ? `Node B fault mode → ${mode}` : r.status === 403 ? "Forbidden: admin token required" : `Could not reach Node B (${r.status})`, !r.ok || mode !== "none");
-    poll();
   });
 
   // ------------------------------------------------------------ event log
@@ -1536,7 +1729,7 @@ pre.out{
     let out = "";
     for (let g = 0; g <= 4; g++) {
       const v = yMax * g / 4, y = Y(v);
-      out += `<line x1="${L}" x2="${W - R}" y1="${y}" y2="${y}" stroke="rgba(255,255,255,.05)"/><text class="axis" x="${L - 6}" y="${y + 3}" text-anchor="end">${Math.round(v).toLocaleString()}</text>`;
+      out += `<line x1="${L}" x2="${W - R}" y1="${y}" y2="${y}" stroke="var(--line)"/><text class="axis" x="${L - 6}" y="${y + 3}" text-anchor="end">${Math.round(v).toLocaleString()}</text>`;
     }
     if (shade) out += `<rect x="${X(shade[0])}" y="${T}" width="${Math.max(2, X(shade[1]) - X(shade[0]))}" height="${ih}" fill="rgba(244,63,94,.14)"/>`;
     if (bars) {
@@ -1551,7 +1744,7 @@ pre.out{
       out += `<path d="${d}" fill="none" stroke="${sr.color}" stroke-width="${sr.width || 1.8}" ${sr.dash ? `stroke-dasharray="${sr.dash}"` : ""}/>`;
     }
     for (const i of marks || []) out += `<line x1="${X(i)}" x2="${X(i)}" y1="${T}" y2="${T + ih}" stroke="var(--warn)" stroke-opacity=".7" stroke-width="1.5"/>`;
-    if (cursor != null) out += `<line x1="${X(cursor)}" x2="${X(cursor)}" y1="${T}" y2="${T + ih}" stroke="#f8fafc" stroke-opacity=".6" stroke-dasharray="3 3"/>`;
+    if (cursor != null) out += `<line x1="${X(cursor)}" x2="${X(cursor)}" y1="${T}" y2="${T + ih}" stroke="var(--text-muted)" stroke-opacity=".6" stroke-dasharray="3 3"/>`;
     out += `<text class="axis" x="${L}" y="${H - 6}">${esc(xLabel[0])}</text><text class="axis" x="${W - R}" y="${H - 6}" text-anchor="end">${esc(xLabel[1])}</text>`;
     svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
     svg.innerHTML = out;
@@ -1638,13 +1831,26 @@ pre.out{
     }, 90);
   };
   document.querySelectorAll(".tab").forEach(btn => btn.addEventListener("click", async () => {
-    document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b === btn));
+    document.querySelectorAll(".tab").forEach(b => {
+      b.classList.toggle("on", b === btn);
+      b.setAttribute("aria-pressed", String(b === btn));
+    });
     const live = btn.dataset.tab === "live";
     $("tlLive").hidden = !live; $("tlReplay").hidden = live;
     if (live) renderLive(); else if (await loadReplay()) renderReplay();
   }));
 
   addEventListener("resize", () => { if (status) render(); if (!$("tlReplay").hidden) renderReplay(); });
+  function updateSectionNavigation() {
+    const section = {"#putKey":"#keys", "#inspect-key":"#keys", "#replay":"#diagnostics"}[location.hash]
+      || location.hash || "#overview";
+    document.querySelectorAll(".sections a").forEach(link => {
+      if (link.hash === section) link.setAttribute("aria-current", "location");
+      else link.removeAttribute("aria-current");
+    });
+  }
+  addEventListener("hashchange", updateSectionNavigation);
+  updateSectionNavigation();
   if (location.hash === "#replay") document.querySelector('.tab[data-tab="replay"]').click();
   poll(); loadPrompt();
   setInterval(poll, POLL_MS);
