@@ -1,6 +1,5 @@
 # PagerKV
 
-**Group 28** · Vishal Agrawal, C. H. Tarun, Shreyas Rai, Vijay, and Vinay
 
 PagerKV is a distributed key-value store. It saves text on a primary node, copies it to a replica, and shows what happens when the replica goes offline and recovers.
 
